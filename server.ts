@@ -265,7 +265,7 @@ const getRequestSupabase = (req: express.Request) => {
 
 const toCompany = (row: any) => row && ({
   id: row.id,
-  userId: row.user_id,
+  userId: row.user_id || row.owner_id,
   name: row.name,
   slug: row.slug,
   plan: row.plan,
@@ -304,6 +304,7 @@ const toCompany = (row: any) => row && ({
 
 const fromCompany = (company: any) => ({
   user_id: company.userId,
+  owner_id: company.userId,
   name: company.name,
   slug: company.slug,
   plan: company.plan,
