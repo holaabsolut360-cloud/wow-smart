@@ -191,7 +191,16 @@ async function startServer() {
 
 const supabaseUrl = process.env.SUPABASE_URL || '';
 const supabaseKey = process.env.SUPABASE_ANON_KEY || '';
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
+const supabaseAdmin = supabaseUrl && supabaseServiceKey
+  ? createClient(supabaseUrl, supabaseServiceKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+    })
+  : null;
 const useSupabaseDb = Boolean(supabase) && (process.env.USE_SUPABASE_DB === "true" || isProduction);
 const superAdminEmail = process.env.SUPERADMIN_EMAIL || "";
 const superAdminPassword = process.env.SUPERADMIN_PASSWORD || "";
@@ -569,7 +578,7 @@ const authMiddleware = async (req: express.Request, res: express.Response, next:
     };
 
     if (useSupabaseDb) {
-      const client = getRequestSupabase(req);
+      const client = supabaseAdmin || getRequestSupabase(req);
       if (!client) return res.status(503).json({ error: "Supabase is not configured" });
 
       const { data, error } = await client
