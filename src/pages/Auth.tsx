@@ -73,7 +73,8 @@ export default function Auth() {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: window.location.origin + '/auth?mode=onboarding'
+          redirectTo: window.location.origin + '/auth?mode=onboarding',
+          scopes: 'openid email profile https://www.googleapis.com/auth/userinfo.email'
         }
       });
       if (error) throw error;

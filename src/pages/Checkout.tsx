@@ -163,7 +163,8 @@ export default function Checkout() {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: window.location.origin + '/dashboard'
+          redirectTo: window.location.origin + '/dashboard',
+          scopes: 'openid email profile https://www.googleapis.com/auth/userinfo.email'
         }
       });
       if (error) throw error;
