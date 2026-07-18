@@ -181,23 +181,29 @@ export interface Company {
   googleAnalyticsId?: string;
   metaPixelId?: string;
   currency?: string;
+  countryCode?: string;
+  taxRate?: number;
   categories?: Category[];
   coupons?: Coupon[];
   storeHoursType?: '24h' | 'specific';
   storeSchedule?: Record<number, { isOpen: boolean; openTime: string; closeTime: string }>;
-  subscriptionStatus?: 'Activa' | 'Suspendida' | 'Pendiente' | 'Vencida';
+  subscriptionStatus?: 'Activa' | 'Suspendida' | 'Pendiente' | 'Vencida' | 'Prueba Gratuita';
   subscriptionEndsAt?: string;
 }
 
 export interface Product {
   id: string;
   companyId: string;
+  itemType?: 'Producto' | 'Servicio';
   name: string;
   desc: string;
   sku?: string;
   barcode?: string;
   price: number;
   salePrice?: number;
+  purchaseCost?: number;
+  marginPercent?: number;
+  taxRate?: number;
   category: string;
   image: string;
   stock?: number | null;

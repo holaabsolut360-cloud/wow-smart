@@ -7,6 +7,7 @@ import { motion } from "motion/react";
 import { Search, ShoppingCart, Info, Share2, Plus, Minus, Trash2, Instagram, Facebook } from "lucide-react";
 import { Company, Product } from "../types";
 import { apiClient } from "../services/api";
+import { resolveCatalogTaxRate, taxLabel } from "../utils/pricingCalculator";
 
 export default function Catalog() {
   const { slug } = useParams();
@@ -84,6 +85,18 @@ export default function Catalog() {
   const termAddToCart = isServiceBusiness ? 'Añadir Solicitud' : 'Agregar';
   const termCartTitle = isServiceBusiness ? 'Mi Solicitud' : 'Mi Pedido';
   const termEmptyCart = isServiceBusiness ? 'Tu solicitud está vacía' : 'El carrito está vacío';
+
+  const resolveTaxRate = (product?: Product) => resolveCatalogTaxRate({
+    productTaxRate: product?.taxRate,
+    companyTaxRate: company?.taxRate,
+    companyCurrency: company?.currency,
+  });
+
+  const taxText = (rate: number) => taxLabel({
+    taxRate: rate,
+    companyCountryCode: company?.countryCode,
+    companyCurrency: company?.currency,
+  });
 
 
   useEffect(() => {
@@ -448,6 +461,7 @@ export default function Catalog() {
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-6">
           {filteredProducts.map(p => {
             const hasDiscount = p.salePrice && p.salePrice < p.price;
+            const productTaxRate = resolveTaxRate(p);
             return (
               <motion.div 
                 initial={{ opacity: 0, y: 10 }}
@@ -503,9 +517,13 @@ export default function Catalog() {
                         <>
                           <span className="text-[9px] sm:text-xs text-slate-400 line-through">{company.currency || 'S/'} {p.price.toFixed(2)}</span>
                           <span className="text-sm sm:text-lg font-bold text-slate-900">{company.currency || 'S/'} {p.salePrice!.toFixed(2)}</span>
+                          {productTaxRate > 0 && <span className="text-[9px] sm:text-[10px] text-slate-500 font-semibold">{taxText(productTaxRate)}</span>}
                         </>
                       ) : (
-                        <span className="text-sm sm:text-lg font-bold text-slate-900">{company.currency || 'S/'} {p.price.toFixed(2)}</span>
+                        <>
+                          <span className="text-sm sm:text-lg font-bold text-slate-900">{company.currency || 'S/'} {p.price.toFixed(2)}</span>
+                          {productTaxRate > 0 && <span className="text-[9px] sm:text-[10px] text-slate-500 font-semibold">{taxText(productTaxRate)}</span>}
+                        </>
                       )}
                     </div>
                     <div className="flex gap-1.5 sm:gap-2">
@@ -765,6 +783,19 @@ export default function Catalog() {
 
             {/* Right: Details */}
             <div className="w-full h-[55vh] md:h-auto md:w-2/5 lg:w-1/3 p-6 md:p-10 flex flex-col overflow-y-auto bg-white pb-24 md:pb-10">
+              {(() => {
+                const selectedTaxRate = resolveTaxRate(selectedProduct);
+                const selectedPrice = selectedProduct.salePrice || selectedProduct.price;
+                return (
+                  <div className="mb-4">
+                    <p className="text-xs font-bold text-slate-500 uppercase">Precio</p>
+                    <p className="text-2xl font-extrabold text-slate-900">{company.currency || 'S/'} {selectedPrice.toFixed(2)}</p>
+                    {selectedTaxRate > 0 && (
+                      <p className="text-xs text-slate-500 font-semibold">{taxText(selectedTaxRate)}</p>
+                    )}
+                  </div>
+                );
+              })()}
               <div className="text-xs font-bold uppercase tracking-wider mb-2" style={{ color: company.color }}>{selectedProduct.category}</div>
               <h2 className="text-2xl font-bold text-slate-900 mb-2">{selectedProduct.name}</h2>
               

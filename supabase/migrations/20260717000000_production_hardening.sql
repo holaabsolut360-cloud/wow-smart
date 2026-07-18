@@ -83,10 +83,29 @@ ALTER TABLE companies
   ADD COLUMN IF NOT EXISTS meta_title TEXT,
   ADD COLUMN IF NOT EXISTS meta_description TEXT,
   ADD COLUMN IF NOT EXISTS google_analytics_id TEXT,
-  ADD COLUMN IF NOT EXISTS meta_pixel_id TEXT;
+  ADD COLUMN IF NOT EXISTS meta_pixel_id TEXT,
+  ADD COLUMN IF NOT EXISTS country_code TEXT,
+  ADD COLUMN IF NOT EXISTS tax_rate NUMERIC DEFAULT 18;
 
 ALTER TABLE products
-  ADD COLUMN IF NOT EXISTS min_stock INTEGER;
+  ADD COLUMN IF NOT EXISTS min_stock INTEGER,
+  ADD COLUMN IF NOT EXISTS item_type TEXT DEFAULT 'Producto',
+  ADD COLUMN IF NOT EXISTS purchase_cost NUMERIC,
+  ADD COLUMN IF NOT EXISTS margin_percent NUMERIC,
+  ADD COLUMN IF NOT EXISTS tax_rate NUMERIC DEFAULT 18;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'products_item_type_check'
+  ) THEN
+    ALTER TABLE products
+      ADD CONSTRAINT products_item_type_check
+      CHECK (item_type IN ('Producto', 'Servicio'));
+  END IF;
+END $$;
 
 ALTER TABLE customers
   ADD COLUMN IF NOT EXISTS document_number TEXT;

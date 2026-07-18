@@ -294,6 +294,8 @@ const toCompany = (row: any) => row && ({
   googleAnalyticsId: row.google_analytics_id,
   metaPixelId: row.meta_pixel_id,
   currency: row.currency,
+  countryCode: row.country_code,
+  taxRate: row.tax_rate,
   categories: row.categories || [],
   coupons: row.coupons || [],
   storeHoursType: row.store_hours_type,
@@ -333,6 +335,8 @@ const fromCompany = (company: any) => ({
   google_analytics_id: company.googleAnalyticsId,
   meta_pixel_id: company.metaPixelId,
   currency: company.currency,
+  country_code: company.countryCode,
+  tax_rate: company.taxRate,
   categories: company.categories,
   coupons: company.coupons,
   store_hours_type: company.storeHoursType,
@@ -344,12 +348,16 @@ const fromCompany = (company: any) => ({
 const toProduct = (row: any) => row && ({
   id: row.id,
   companyId: row.company_id,
+  itemType: row.item_type || 'Producto',
   name: row.name,
   desc: row.description,
   sku: row.sku,
   barcode: row.barcode,
   price: Number(row.price || 0),
   salePrice: row.sale_price == null ? undefined : Number(row.sale_price),
+  purchaseCost: row.purchase_cost == null ? undefined : Number(row.purchase_cost),
+  marginPercent: row.margin_percent == null ? undefined : Number(row.margin_percent),
+  taxRate: row.tax_rate == null ? undefined : Number(row.tax_rate),
   category: row.category,
   image: row.image,
   stock: row.stock,
@@ -360,12 +368,16 @@ const toProduct = (row: any) => row && ({
 
 const fromProduct = (product: any) => ({
   company_id: product.companyId,
+  item_type: product.itemType,
   name: product.name,
   description: product.desc,
   sku: product.sku,
   barcode: product.barcode,
   price: product.price,
   sale_price: product.salePrice,
+  purchase_cost: product.purchaseCost,
+  margin_percent: product.marginPercent,
+  tax_rate: product.taxRate,
   category: product.category,
   image: product.image,
   stock: product.stock,
@@ -373,6 +385,24 @@ const fromProduct = (product: any) => ({
   variants: product.variants,
   recipe: product.recipe,
 });
+
+const normalizeProductPayload = (payload: any) => {
+  const itemType = payload?.itemType === 'Servicio' ? 'Servicio' : 'Producto';
+  const normalized = {
+    ...payload,
+    itemType,
+    taxRate: payload?.taxRate == null || payload?.taxRate === '' ? 18 : Number(payload.taxRate),
+    marginPercent: payload?.marginPercent == null || payload?.marginPercent === '' ? undefined : Number(payload.marginPercent),
+    purchaseCost: payload?.purchaseCost == null || payload?.purchaseCost === '' ? undefined : Number(payload.purchaseCost),
+  };
+
+  if (itemType === 'Servicio') {
+    normalized.stock = null;
+    normalized.minStock = null;
+  }
+
+  return normalized;
+};
 
 const toCustomer = (row: any) => row && ({
   id: row.id,
@@ -1301,13 +1331,15 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
 
   // Add product
   app.post("/api/products", async (req, res) => {
+    const normalizedProduct = normalizeProductPayload(req.body);
+
     if (useSupabaseDb) {
       const client = getRequestSupabase(req);
       if (!client) return res.status(503).json({ error: "Supabase is not configured" });
 
       const { data, error } = await client
         .from("products")
-        .insert(stripUndefined(fromProduct(req.body)))
+        .insert(stripUndefined(fromProduct(normalizedProduct)))
         .select("*")
         .single();
 
@@ -1317,7 +1349,7 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
 
     const newProduct = {
       id: Date.now().toString(),
-      ...req.body
+      ...normalizedProduct
     };
     db.products.push(newProduct);
     addAuditLog(newProduct.companyId, "CREAR", "Productos", `Producto '${newProduct.name}' agregado al catálogo`);
@@ -1326,13 +1358,15 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
 
   // Update product
   app.put("/api/products/:id", async (req, res) => {
+    const normalizedProduct = normalizeProductPayload(req.body);
+
     if (useSupabaseDb) {
       const client = getRequestSupabase(req);
       if (!client) return res.status(503).json({ error: "Supabase is not configured" });
 
       const { data, error } = await client
         .from("products")
-        .update(stripUndefined(fromProduct(req.body)))
+        .update(stripUndefined(fromProduct(normalizedProduct)))
         .eq("id", (req.params as any).id)
         .select("*")
         .single();
@@ -1343,7 +1377,7 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
 
     const idx = db.products.findIndex(p => p.id === (req.params as any).id);
     if (idx !== -1) {
-      db.products[idx] = { ...db.products[idx], ...req.body };
+      db.products[idx] = { ...db.products[idx], ...normalizedProduct };
       addAuditLog(db.products[idx].companyId, "ACTUALIZAR", "Productos", `Producto '${db.products[idx].name}' actualizado`);
       res.json(db.products[idx]);
     } else {

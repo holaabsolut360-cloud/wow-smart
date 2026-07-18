@@ -1,11 +1,13 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { motion } from 'motion/react';
 import { ExternalLink, Plus, Trash2, Edit2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import * as XLSX from 'xlsx';
 import { Company, Product, Category } from '../../types';
 import { ImageUpload } from '../ImageUpload';
 import { apiClient } from "../../services/api";
+import { calculatePricing } from '../../utils/pricingCalculator';
 
 interface ProductsTabProps {
   company: Company | null;
@@ -15,6 +17,9 @@ interface ProductsTabProps {
 export function ProductsTab({ company, categories }: ProductsTabProps) {
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importMessage, setImportMessage] = useState('');
+  const [importError, setImportError] = useState('');
   const limit = 20;
 
   const { data: productsData, isLoading } = useQuery({
@@ -62,13 +67,139 @@ export function ProductsTab({ company, categories }: ProductsTabProps) {
   const [isAdding, setIsAdding] = useState(false);
   const [newProd, setNewProd] = useState<Partial<Product>>({});
 
+  const defaultTaxRate = Number(company?.taxRate ?? 18);
+  const resolvedTaxRate = Number(newProd.taxRate ?? defaultTaxRate);
+  const purchaseCost = Number(newProd.purchaseCost ?? 0);
+  const marginPercent = Number(newProd.marginPercent ?? 0);
+
+  const financial = useMemo(() => calculatePricing({
+    purchaseCost,
+    marginPercent,
+    taxRate: resolvedTaxRate,
+  }), [marginPercent, purchaseCost, resolvedTaxRate]);
+
+  const normalize = (value: string) =>
+    value
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/\s+/g, '_')
+      .trim();
+
+  const getField = (row: Record<string, any>, keys: string[]) => {
+    for (const key of Object.keys(row)) {
+      const normalizedKey = normalize(key);
+      if (keys.includes(normalizedKey)) return row[key];
+    }
+    return undefined;
+  };
+
+  const toNumber = (value: any): number | undefined => {
+    if (value === null || value === undefined || value === '') return undefined;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+    const normalized = String(value).replace(/[^0-9,.-]/g, '').replace(',', '.');
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  };
+
+  const handleBulkImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !company?.id) return;
+
+    setImportError('');
+    setImportMessage('');
+    setIsImporting(true);
+
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      const firstSheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[firstSheetName];
+      const rows = XLSX.utils.sheet_to_json<Record<string, any>>(worksheet, { defval: '' });
+
+      if (!rows.length) {
+        throw new Error('El archivo no contiene filas con datos.');
+      }
+
+      const parsedProducts: Partial<Product>[] = [];
+      let skipped = 0;
+
+      for (const row of rows) {
+        const name = String(getField(row, ['nombre', 'name', 'producto']) || '').trim();
+        const price = toNumber(getField(row, ['precio', 'price']));
+
+        if (!name || price === undefined) {
+          skipped += 1;
+          continue;
+        }
+
+        const salePrice = toNumber(getField(row, ['precio_oferta', 'sale_price', 'saleprice']));
+        const stock = toNumber(getField(row, ['stock', 'cantidad', 'inventario']));
+        const purchaseCostValue = toNumber(getField(row, ['precio_compra', 'costo', 'purchase_cost', 'cost']));
+        const marginValue = toNumber(getField(row, ['rentabilidad', 'margen', 'margin_percent', 'ganancia_pct']));
+        const taxRateValue = toNumber(getField(row, ['impuesto', 'tax_rate', 'igv']));
+        const itemTypeRaw = String(getField(row, ['tipo', 'item_type', 'tipo_item']) || 'Producto').trim().toLowerCase();
+        const itemType = itemTypeRaw.includes('serv') ? 'Servicio' : 'Producto';
+
+        parsedProducts.push({
+            itemType,
+          name,
+          category: String(getField(row, ['categoria', 'category']) || 'General').trim(),
+          price,
+          salePrice,
+            stock: itemType === 'Servicio' ? null : stock,
+          sku: String(getField(row, ['sku', 'codigo', 'codigo_interno']) || '').trim(),
+          barcode: String(getField(row, ['barcode', 'codigo_barras']) || '').trim(),
+          desc: String(getField(row, ['descripcion', 'description']) || '').trim(),
+          image: String(getField(row, ['imagen', 'image']) || '').trim(),
+            purchaseCost: purchaseCostValue,
+            marginPercent: marginValue,
+            taxRate: taxRateValue ?? defaultTaxRate,
+        });
+      }
+
+      if (!parsedProducts.length) {
+        throw new Error('No se encontraron productos válidos. Asegúrate de incluir columnas de nombre y precio.');
+      }
+
+      const results = await Promise.allSettled(
+        parsedProducts.map((product) =>
+          apiClient.post('/api/products', { companyId: company.id, ...product }),
+        ),
+      );
+
+      const successCount = results.filter((result) => result.status === 'fulfilled').length;
+      const failCount = results.length - successCount;
+
+      queryClient.invalidateQueries({ queryKey: ['products', company?.id] });
+      setImportMessage(
+        `Importación completada: ${successCount} producto(s) creados${skipped ? `, ${skipped} fila(s) omitidas` : ''}${failCount ? `, ${failCount} fallidas` : ''}.`,
+      );
+    } catch (err: any) {
+      setImportError(err.message || 'No se pudo procesar el archivo.');
+    } finally {
+      setIsImporting(false);
+      e.target.value = '';
+    }
+  };
+
   const handleAddProduct = (e: React.FormEvent) => {
     e.preventDefault();
-    addMutation.mutate(newProd);
+    const itemType = newProd.itemType || 'Producto';
+    addMutation.mutate({
+      ...newProd,
+      itemType,
+      taxRate: newProd.taxRate ?? defaultTaxRate,
+      stock: itemType === 'Servicio' ? null : newProd.stock,
+    });
   };
 
   const handleEdit = (product: Product) => {
-    setNewProd(product);
+    setNewProd({
+      ...product,
+      itemType: product.itemType || 'Producto',
+      taxRate: product.taxRate ?? defaultTaxRate,
+    });
     setIsAdding(true);
     document.querySelector('main')?.scrollTo({ top: 0, behavior: 'smooth' });
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -94,8 +225,18 @@ export function ProductsTab({ company, categories }: ProductsTabProps) {
                   <ExternalLink className="w-5 h-5" />
                   Ver Catálogo
                 </Link>
+                <label className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-slate-200 bg-white text-slate-700 font-semibold hover:bg-slate-50 shadow-sm transition-colors cursor-pointer">
+                  <input
+                    type="file"
+                    accept=".csv,.xlsx,.xls"
+                    onChange={handleBulkImport}
+                    className="hidden"
+                    disabled={isImporting}
+                  />
+                  {isImporting ? 'Importando...' : 'Importar CSV/Excel'}
+                </label>
                 <button 
-                  onClick={() => { setNewProd({}); setIsAdding(true); }}
+                  onClick={() => { setNewProd({ itemType: 'Producto', taxRate: defaultTaxRate }); setIsAdding(true); }}
                   className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700 shadow-sm transition-colors"
                 >
                   <Plus className="w-5 h-5" />
@@ -103,6 +244,12 @@ export function ProductsTab({ company, categories }: ProductsTabProps) {
                 </button>
               </div>
             </header>
+
+            {(importMessage || importError) && (
+              <div className={`mb-6 p-4 rounded-xl border ${importError ? 'bg-rose-50 border-rose-200 text-rose-700' : 'bg-emerald-50 border-emerald-200 text-emerald-700'}`}>
+                {importError || importMessage}
+              </div>
+            )}
 
             {isAdding && (
               <motion.div 
@@ -112,6 +259,26 @@ export function ProductsTab({ company, categories }: ProductsTabProps) {
               >
                 <h2 className="text-xl font-bold mb-6 text-slate-800">{newProd.id ? 'Editar Producto' : 'Agregar Producto'}</h2>
                 <form onSubmit={handleAddProduct} className="grid grid-cols-2 gap-5">
+                  <div className="col-span-2 md:col-span-1">
+                    <label className="block text-sm font-bold text-slate-700 mb-1">Tipo de Ítem</label>
+                    <select
+                      value={newProd.itemType || 'Producto'}
+                      onChange={(e) => {
+                        const nextType = e.target.value as 'Producto' | 'Servicio';
+                        setNewProd({
+                          ...newProd,
+                          itemType: nextType,
+                          stock: nextType === 'Servicio' ? null : newProd.stock,
+                          minStock: nextType === 'Servicio' ? undefined : newProd.minStock,
+                        });
+                      }}
+                      className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-slate-900 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none transition-all"
+                    >
+                      <option value="Producto">Producto</option>
+                      <option value="Servicio">Servicio</option>
+                    </select>
+                  </div>
+
                   <div className="col-span-2 md:col-span-1">
                     <label className="block text-sm font-bold text-slate-700 mb-1">Nombre</label>
                     <input 
@@ -135,7 +302,43 @@ export function ProductsTab({ company, categories }: ProductsTabProps) {
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-1">Precio (S/)</label>
+                    <label className="block text-sm font-bold text-slate-700 mb-1">Precio de Compra ({company?.currency || 'S/'})</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={newProd.purchaseCost ?? ''}
+                      onChange={e => setNewProd({ ...newProd, purchaseCost: e.target.value === '' ? undefined : Number(e.target.value) })}
+                      className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-slate-900 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none transition-all"
+                      placeholder="0.00"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-1">Rentabilidad (%)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={newProd.marginPercent ?? ''}
+                      onChange={e => setNewProd({ ...newProd, marginPercent: e.target.value === '' ? undefined : Number(e.target.value) })}
+                      className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-slate-900 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none transition-all"
+                      placeholder="30"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-1">Impuesto (%)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={newProd.taxRate ?? defaultTaxRate}
+                      onChange={e => setNewProd({ ...newProd, taxRate: e.target.value === '' ? defaultTaxRate : Number(e.target.value) })}
+                      className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-slate-900 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none transition-all"
+                      placeholder="18"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-1">Precio ({company?.currency || 'S/'})</label>
                     <input 
                       required
                       type="number" 
@@ -146,7 +349,7 @@ export function ProductsTab({ company, categories }: ProductsTabProps) {
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-1">Precio Oferta (S/) - Opcional</label>
+                    <label className="block text-sm font-bold text-slate-700 mb-1">Precio Oferta ({company?.currency || 'S/'}) - Opcional</label>
                     <input 
                       type="number" 
                       value={newProd.salePrice || ''}
@@ -161,10 +364,28 @@ export function ProductsTab({ company, categories }: ProductsTabProps) {
                       type="number" 
                       value={newProd.stock ?? ''}
                       onChange={e => setNewProd({...newProd, stock: e.target.value === '' ? null : Number(e.target.value)})}
+                      disabled={newProd.itemType === 'Servicio'}
                       className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-slate-900 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none transition-all" 
-                      placeholder="Ilimitado si se deja en blanco" 
+                      placeholder={newProd.itemType === 'Servicio' ? 'No aplica para servicios' : 'Ilimitado si se deja en blanco'} 
                     />
                   </div>
+
+                  <div className="col-span-2 grid grid-cols-1 md:grid-cols-3 gap-3 p-4 rounded-xl bg-slate-50 border border-slate-200">
+                    <div>
+                      <p className="text-xs font-bold text-slate-500 uppercase">Ganancia Neta</p>
+                      <p className="text-lg font-bold text-emerald-700">{company?.currency || 'S/'} {financial.profitAmount.toFixed(2)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-slate-500 uppercase">Precio Venta Neto</p>
+                      <p className="text-lg font-bold text-slate-900">{company?.currency || 'S/'} {financial.netSalePrice.toFixed(2)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-slate-500 uppercase">Precio Final (+IGV)</p>
+                      <p className="text-lg font-bold text-indigo-700">{company?.currency || 'S/'} {financial.finalPrice.toFixed(2)}</p>
+                      <p className="text-xs text-slate-500">Incluye impuesto {financial.taxRate.toFixed(2)}%</p>
+                    </div>
+                  </div>
+
                   <div className="col-span-2 md:col-span-1">
                     <label className="block text-sm font-bold text-slate-700 mb-1">SKU</label>
                     <input 
@@ -284,6 +505,7 @@ export function ProductsTab({ company, categories }: ProductsTabProps) {
                   </div>
                   <div className="p-5 flex flex-col flex-1">
                     <div className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider mb-1">{p.category}</div>
+                    <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">{p.itemType || 'Producto'}</div>
                     <h3 className="font-bold text-lg text-slate-800 mb-2 line-clamp-1">{p.name}</h3>
                     <div className="flex items-end gap-2 mb-4 flex-1">
                       {p.salePrice ? (
