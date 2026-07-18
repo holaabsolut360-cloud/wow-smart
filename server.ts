@@ -565,7 +565,8 @@ const authMiddleware = async (req: express.Request, res: express.Response, next:
       userId: user.id,
       name: name || "Mi Nueva Empresa",
       slug: (name || "mi-empresa").toLowerCase().replace(/[^a-z0-9]+/g, "-") + "-" + Date.now(),
-      plan: "free",
+      // Keep billing plan compatible with DB CHECK constraint (companies_plan_check).
+      plan: "Emprendedor",
       subscriptionStatus: isTrial ? "Prueba Gratuita" : "Activa",
       subscriptionEndsAt: isTrial ? endsAt.toISOString().split('T')[0] : "2026-08-15",
       businessType: "Restaurante",
