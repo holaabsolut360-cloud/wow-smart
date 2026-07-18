@@ -470,12 +470,12 @@ const stripUndefined = (value: Record<string, any>) =>
   Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
 
 const authMiddleware = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
- const publicApiRoute =
-  req.path.startsWith('/catalog') ||
-  req.path.startsWith('/superadmin') ||
-  req.path === '/approve-subscription' ||
-  (req.method === 'GET' && req.path === '/products') ||
-  (req.method === 'POST' && req.path === '/orders');
+  const publicApiRoute =
+    req.path.startsWith('/catalog') ||
+    req.path.startsWith('/superadmin') ||
+    req.path === '/approve-subscription' ||
+    (req.method === 'GET' && req.path === '/products') ||
+    (req.method === 'POST' && req.path === '/orders');
 
   if (publicApiRoute) {
     return next();
@@ -606,6 +606,70 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
   app.post("/api/superadmin/logout", (_req, res) => {
     clearSuperAdminCookie(res);
     res.json({ authenticated: false });
+  });
+
+  // Lista real de empresas para el panel SuperAdmin (reemplaza los datos de ejemplo del frontend)
+  app.get("/api/superadmin/empresas", requireSuperAdmin, async (_req, res) => {
+    if (!useSupabaseDb) {
+      const empresas = db.companies.map((c: any) => ({
+        id: c.id,
+        nombre: c.name,
+        plan: c.plan,
+        estado: c.subscriptionStatus || "Activa",
+        registro: c.subscriptionEndsAt || "",
+      }));
+      return res.json({ data: empresas });
+    }
+
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const { data, error } = await client
+      .from("companies")
+      .select("id, name, plan, subscription_status, created_at")
+      .order("created_at", { ascending: false });
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    const empresas = (data || []).map((row: any) => ({
+      id: row.id,
+      nombre: row.name,
+      plan: row.plan,
+      estado: row.subscription_status || "Activa",
+      registro: row.created_at ? row.created_at.split("T")[0] : "",
+    }));
+
+    res.json({ data: empresas });
+  });
+
+  // Activar / Suspender una empresa real desde el panel SuperAdmin
+  app.put("/api/superadmin/empresas/:id/estado", requireSuperAdmin, async (req, res) => {
+    const { estado } = req.body || {};
+    if (estado !== "Activa" && estado !== "Suspendida") {
+      return res.status(400).json({ error: "Estado inválido. Debe ser 'Activa' o 'Suspendida'." });
+    }
+
+    if (!useSupabaseDb) {
+      const idx = db.companies.findIndex((c: any) => c.id === req.params.id);
+      if (idx === -1) return res.status(404).json({ error: "Empresa no encontrada" });
+      db.companies[idx].subscriptionStatus = estado;
+      return res.json({ id: db.companies[idx].id, estado });
+    }
+
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const { data, error } = await client
+      .from("companies")
+      .update({ subscription_status: estado })
+      .eq("id", req.params.id)
+      .select("id, subscription_status")
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: "Empresa no encontrada" });
+
+    res.json({ id: data.id, estado: data.subscription_status });
   });
 
   app.get("/api/companies", (req, res) => {
