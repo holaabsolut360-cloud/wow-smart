@@ -220,7 +220,7 @@ export default function Dashboard() {
             <span className="text-lg">🚚</span>
             Proveedores & Compras
           </button>}
-          {hasAccess("recipes") && isGastronomic && company?.plan === "pro" && (
+          {hasAccess("recipes") && isGastronomic && (company?.plan !== "Emprendedor" || company?.subscriptionStatus === "Prueba Gratuita") && (
             <button 
               onClick={() => setActiveTab('recipes')}
               className={`flex items-center gap-2 md:gap-3 px-4 py-2 md:py-3 rounded-xl transition-colors whitespace-nowrap md:w-full ${activeTab === 'recipes' ? 'bg-indigo-50 text-indigo-700 font-bold' : 'hover:bg-slate-50 text-slate-600 font-medium'}`}
@@ -259,14 +259,15 @@ export default function Dashboard() {
 
       {/* Main Content */}
       <main className={`flex-1 overflow-y-auto ${activeTab === 'pos' ? 'bg-slate-100 p-0 sm:p-0 md:p-0' : 'p-4 sm:p-8 md:p-12'}`}>
-                {company?.subscriptionStatus === 'Prueba Gratuita' && new Date(company.subscriptionEndsAt) < new Date() && (
+                {(company?.subscriptionStatus === 'Vencida' ||
+                  (company?.subscriptionStatus === 'Prueba Gratuita' && new Date(company.subscriptionEndsAt as string) < new Date())) && (
           <div className="bg-amber-50 border-b border-amber-200 p-4 text-center">
             <h3 className="text-amber-800 font-bold flex justify-center items-center gap-2">
               <ShieldCheck className="w-5 h-5" />
               Tu prueba gratuita ha finalizado
             </h3>
             <p className="text-amber-600 text-sm mt-1">
-              Para seguir utilizando todas las funcionalidades, por favor suscríbete al plan Emprendedor.
+              Para seguir utilizando todas las funcionalidades, por favor suscríbete a uno de nuestros planes.
             </p>
             <Link to="/checkout/emprendedor" className="inline-block mt-3 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-bold rounded-lg transition-colors">
               Suscribirme ahora

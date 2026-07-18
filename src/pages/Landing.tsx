@@ -50,8 +50,19 @@ export default function Landing() {
 
         {/* Pricing Header */}
         <section className="text-center mb-12 max-w-3xl mx-auto px-4">
-          <h2 className="text-3xl font-extrabold text-slate-900 mb-4 tracking-tight">Empieza con lo que necesitas hoy. Crece cuando tu negocio crezca.</h2>
-          <p className="text-lg text-slate-500">Sin contratos. Sin complicaciones. Actualiza tu plan cuando quieras.</p>
+          <h2 className="text-3xl font-extrabold text-slate-900 mb-4 tracking-tight">Elige cómo quieres comenzar</h2>
+          <p className="text-lg text-slate-500">Puedes probar WOW SMART completamente gratis durante 15 días o contratar el plan que mejor se adapte a tu negocio desde hoy.</p>
+        </section>
+
+        {/* Trial First Path */}
+        <section className="text-center mb-12 max-w-3xl mx-auto px-4">
+          <div className="bg-white rounded-2xl border border-slate-200 p-8 shadow-sm">
+            <p className="text-2xl font-extrabold text-slate-900 mb-4 tracking-tight">¿Quieres probar primero?</p>
+            <Link to="/auth?mode=register&trial=true" className="inline-block px-8 py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-sm transition-colors">
+              🚀 Comenzar Prueba Gratuita
+            </Link>
+            <p className="text-sm text-slate-500 mt-4">Sin tarjeta de crédito • Configuración en menos de 2 minutos</p>
+          </div>
         </section>
 
         {/* Pricing Grid */}
@@ -99,7 +110,7 @@ export default function Landing() {
             <div className="mt-auto pt-6 border-t border-slate-100">
               <p className="text-xs text-slate-500 mb-4 font-medium italic">Ideal para: Emprendedores y pequeños negocios.</p>
               <Link to="/checkout/emprendedor" className="block text-center w-full py-3.5 rounded-xl border-2 border-slate-200 text-slate-700 font-bold hover:bg-slate-50 hover:border-slate-300 transition-all">
-                Comenzar Ahora
+                Contratar Emprendedor
               </Link>
             </div>
           </div>
@@ -158,7 +169,7 @@ export default function Landing() {
             <div className="mt-auto pt-6 border-t border-indigo-500/50">
               <p className="text-xs text-indigo-200 mb-4 font-medium italic">Ideal para: tiendas, bodegas, restaurantes y negocios con ventas diarias.</p>
               <Link to="/checkout/negocio" className="block text-center w-full py-3.5 rounded-xl bg-white text-indigo-600 font-bold shadow-md hover:bg-slate-50 transition-colors">
-                Comenzar Ahora
+                Contratar Negocio
               </Link>
             </div>
           </div>
@@ -218,10 +229,14 @@ export default function Landing() {
             <div className="mt-auto pt-6 border-t border-slate-100">
               <p className="text-xs text-slate-500 mb-4 font-medium italic">Ideal para: Empresas que buscan crecer y automatizar sus procesos.</p>
               <Link to="/checkout/empresa" className="block text-center w-full py-3.5 rounded-xl border-2 border-slate-200 text-slate-700 font-bold hover:bg-slate-50 hover:border-slate-300 transition-all">
-                Elegir Plan Empresa
+                Contratar Empresa
               </Link>
             </div>
           </div>
+        </section>
+
+        <section className="text-center mb-20 max-w-3xl mx-auto px-4">
+          <p className="text-lg text-slate-500">¿Necesitas comenzar hoy mismo? Elige un plan y actívalo al instante.</p>
         </section>
 
         {/* Preguntas Frecuentes */}

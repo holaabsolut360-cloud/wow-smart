@@ -155,7 +155,7 @@ export interface Company {
   userId: string;
   name: string;
   slug: string;
-  plan: 'free' | 'pro' | 'enterprise';
+  plan: 'Emprendedor' | 'Negocio' | 'Empresa';
   businessType?: string;
   color: string;
   whatsapp: string;
@@ -185,7 +185,7 @@ export interface Company {
   coupons?: Coupon[];
   storeHoursType?: '24h' | 'specific';
   storeSchedule?: Record<number, { isOpen: boolean; openTime: string; closeTime: string }>;
-  subscriptionStatus?: 'Activa' | 'Suspendida' | 'Pendiente' | 'Vencida';
+  subscriptionStatus?: 'Activa' | 'Suspendida' | 'Pendiente' | 'Vencida' | 'Prueba Gratuita';
   subscriptionEndsAt?: string;
 }
 

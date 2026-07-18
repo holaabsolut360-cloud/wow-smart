@@ -84,66 +84,103 @@ export default function SuperAdmin() {
 
   useEffect(() => {
     if (isAuthenticated) {
-      const payments = JSON.parse(localStorage.getItem('pendingPayments') || '[]');
-      setPendingPayments(payments);
+      fetch('/api/superadmin/payments')
+        .then(res => res.ok ? res.json() : [])
+        .then(data => setPendingPayments(Array.isArray(data) ? data : []))
+        .catch(() => setPendingPayments([]));
     }
   }, [isAuthenticated, activeTab]);
 
   const handleApprovePayment = async (id: string, payment: any) => {
-    const payments = pendingPayments.filter(p => p.id !== id);
-    setPendingPayments(payments);
-    localStorage.setItem('pendingPayments', JSON.stringify(payments));
-    
-    const nuevaEmpresa = {
-      id: Date.now().toString(),
-      nombre: payment.businessName,
-      plan: payment.plan,
-      estado: 'Activa',
-      registro: new Date().toISOString().split('T')[0]
-    };
-    
-    setEmpresas(prev => [nuevaEmpresa, ...prev]);
-    
-    const vencimiento = new Date();
-    vencimiento.setDate(vencimiento.getDate() + 30);
-    
-    const nuevaSuscripcion = {
-      id: Date.now().toString(),
-      empresa: payment.businessName,
-      plan: payment.plan,
-      estado: 'Activa',
-      vencimiento: vencimiento.toISOString().split('T')[0],
-      precio: payment.amount
-    };
-    
-    setSuscripciones(prev => [nuevaSuscripcion, ...prev]);
-
-    // Llama a la API para enviar correo
     try {
-      await fetch('/api/approve-subscription', {
+      const res = await fetch(`/api/superadmin/payments/${id}/approve`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          email: payment.email || 'cliente@ejemplo.com',
-          businessName: payment.businessName,
-          plan: payment.plan,
-          amount: payment.amount
-        })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customerEmail: payment.email || payment.companies?.email || payment.customerEmail }),
       });
-    } catch (e) {
-      console.error('Error enviando correo', e);
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || 'No se pudo aprobar el pago');
+      }
+
+      setPendingPayments(prev => prev.filter(p => p.id !== id));
+
+      const nuevaEmpresa = {
+        id: payment.company_id || Date.now().toString(),
+        nombre: payment.companies?.name || payment.businessName || 'Empresa',
+        plan: payment.plan,
+        estado: 'Activa',
+        registro: new Date().toISOString().split('T')[0]
+      };
+      setEmpresas(prev => [nuevaEmpresa, ...prev]);
+
+      const vencimiento = new Date();
+      vencimiento.setDate(vencimiento.getDate() + 30);
+      setSuscripciones(prev => [{
+        id: Date.now().toString(),
+        empresa: nuevaEmpresa.nombre,
+        plan: payment.plan,
+        estado: 'Activa',
+        vencimiento: vencimiento.toISOString().split('T')[0],
+        precio: payment.amount
+      }, ...prev]);
+
+      alert('Pago aprobado. La suscripción se ha activado y se ha enviado el comprobante por correo.');
+    } catch (e: any) {
+      alert(e.message || 'Error al aprobar el pago');
     }
-    
-    alert('Pago aprobado. La suscripción se ha activado y se ha enviado el comprobante por correo.');
   };
 
-  const handleRejectPayment = (id: string) => {
-    const payments = pendingPayments.filter(p => p.id !== id);
-    setPendingPayments(payments);
-    localStorage.setItem('pendingPayments', JSON.stringify(payments));
-    alert('Pago rechazado. Se ha notificado al cliente para que suba un nuevo comprobante.');
+  const handleStartReview = async (id: string) => {
+    try {
+      const res = await fetch(`/api/superadmin/payments/${id}/start-review`, { method: 'POST' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || 'No se pudo iniciar la revisión');
+      }
+      setPendingPayments(prev => prev.map(p => p.id === id ? { ...p, status: 'En revisión' } : p));
+    } catch (e: any) {
+      alert(e.message || 'Error al iniciar la revisión');
+    }
+  };
+
+  const handleViewProof = async (id: string) => {
+    try {
+      const res = await fetch(`/api/payments/${id}/proof-url`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || 'No se pudo obtener el comprobante');
+      }
+      const data = await res.json();
+      window.open(data.url, '_blank', 'noopener,noreferrer');
+    } catch (e: any) {
+      alert(e.message || 'Error al abrir el comprobante');
+    }
+  };
+
+  const handleRejectPayment = async (id: string) => {
+    const payment = pendingPayments.find(p => p.id === id);
+    const reason = window.prompt('Motivo del rechazo (se enviará al cliente):', 'No se pudo validar el comprobante');
+    if (reason === null) return;
+
+    try {
+      const res = await fetch(`/api/superadmin/payments/${id}/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customerEmail: payment?.email || payment?.companies?.email || payment?.customerEmail, reason }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || 'No se pudo rechazar el pago');
+      }
+
+      setPendingPayments(prev => prev.filter(p => p.id !== id));
+      alert('Pago rechazado. Se ha notificado al cliente para que suba un nuevo comprobante.');
+    } catch (e: any) {
+      alert(e.message || 'Error al rechazar el pago');
+    }
   };
 
   const handleActivarEmpresa = (id: string) => {
@@ -439,6 +476,7 @@ export default function SuperAdmin() {
                       <th className="p-4 font-bold border-b border-slate-200">Plan</th>
                       <th className="p-4 font-bold border-b border-slate-200">Monto</th>
                       <th className="p-4 font-bold border-b border-slate-200">Método</th>
+                      <th className="p-4 font-bold border-b border-slate-200">Estado</th>
                       <th className="p-4 font-bold border-b border-slate-200">Comprobante</th>
                       <th className="p-4 font-bold border-b border-slate-200">Acciones</th>
                     </tr>
@@ -447,18 +485,32 @@ export default function SuperAdmin() {
                     {pendingPayments.length > 0 ? (
                       pendingPayments.map(payment => (
                         <tr key={payment.id} className="border-b border-slate-100 hover:bg-slate-50">
-                          <td className="p-4 font-bold text-slate-800">{payment.businessName}</td>
+                          <td className="p-4 font-bold text-slate-800">{payment.companies?.name || payment.businessName || 'Empresa'}</td>
                           <td className="p-4 text-slate-600">
                             <span className="bg-indigo-50 text-indigo-700 px-2 py-1 rounded font-medium text-xs">{payment.plan}</span>
                           </td>
                           <td className="p-4 font-bold text-slate-800">S/ {payment.amount}</td>
-                          <td className="p-4 text-slate-600">{payment.method}</td>
+                          <td className="p-4 text-slate-600">{payment.method}{payment.reference ? ` (${payment.reference})` : ''}</td>
                           <td className="p-4">
-                            <button className="flex items-center gap-1 text-indigo-600 hover:text-indigo-800 font-medium">
-                              <ImageIcon className="w-4 h-4" /> Ver Imagen
-                            </button>
+                            <span className={`px-2 py-1 rounded font-medium text-xs ${payment.status === 'En revisión' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
+                              {payment.status || 'Pendiente'}
+                            </span>
+                          </td>
+                          <td className="p-4">
+                            {payment.proof_path ? (
+                              <button onClick={() => handleViewProof(payment.id)} className="flex items-center gap-1 text-indigo-600 hover:text-indigo-800 font-medium">
+                                <ImageIcon className="w-4 h-4" /> Ver Imagen
+                              </button>
+                            ) : (
+                              <span className="text-slate-400 text-xs">Sin comprobante</span>
+                            )}
                           </td>
                           <td className="p-4 flex gap-2">
+                            {(!payment.status || payment.status === 'Pendiente') && (
+                              <button onClick={() => handleStartReview(payment.id)} className="flex items-center gap-1 bg-amber-100 text-amber-700 hover:bg-amber-200 px-3 py-1.5 rounded-lg font-bold transition-colors">
+                                Revisar
+                              </button>
+                            )}
                             <button onClick={() => handleApprovePayment(payment.id, payment)} className="flex items-center gap-1 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 px-3 py-1.5 rounded-lg font-bold transition-colors">
                               <CheckCircle className="w-4 h-4" /> Aprobar
                             </button>

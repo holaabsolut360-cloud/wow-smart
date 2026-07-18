@@ -4,6 +4,7 @@ import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { Resend } from 'resend';
+import { mountSaasRoutes } from "./server/routes/index";
 
 const isProduction = process.env.NODE_ENV === "production";
 const requiredServerEnv = ["SUPABASE_URL", "SUPABASE_ANON_KEY"];
@@ -14,6 +15,18 @@ if (isProduction && missingServerEnv.length > 0) {
 }
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+
+// Safety net: an unhandled rejection in any request handler (e.g. a
+// synchronous throw inside an async controller that forgot a try/catch)
+// should never crash the whole process and take down every other
+// in-flight request. The real fix is always a try/catch at the source
+// (see server/controllers/*), but this is defense-in-depth for production.
+process.on("unhandledRejection", (reason) => {
+  console.error("[unhandledRejection]", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[uncaughtException]", err);
+});
 
 
 // Mock Database for the SaaS
@@ -27,7 +40,7 @@ const db = {
       userId: "1",
       name: "Absolut 360",
       slug: "absolut360",
-      plan: "pro", // free, pro, enterprise
+      plan: "Empresa", // Emprendedor, Negocio, Empresa
       subscriptionStatus: "Activa",
       subscriptionEndsAt: "2026-08-15",
       businessType: "Agencia de publicidad",
@@ -304,7 +317,6 @@ const toCompany = (row: any) => row && ({
 
 const fromCompany = (company: any) => ({
   user_id: company.userId,
-  owner_id: company.userId,
   name: company.name,
   slug: company.slug,
   plan: company.plan,
@@ -443,7 +455,6 @@ const authMiddleware = async (req: express.Request, res: express.Response, next:
   const publicApiRoute =
     req.path.startsWith('/api/catalog') ||
     req.path.startsWith('/api/superadmin') ||
-    req.path === '/api/approve-subscription' ||
     (req.method === 'GET' && req.path === '/api/products') ||
     (req.method === 'POST' && req.path === '/api/orders');
 
@@ -479,6 +490,12 @@ const authMiddleware = async (req: express.Request, res: express.Response, next:
   next();
 };
 
+
+  // New layered architecture routes (Routes -> Controllers -> Services ->
+  // Repositories). Mounted BEFORE the legacy authMiddleware because these
+  // routers manage their own auth per-route (requireAuth, requireSuperAdmin,
+  // requireCronSecret, or public for feature flags).
+  mountSaasRoutes(app);
 
   app.use('/api', authMiddleware);
 
@@ -550,51 +567,43 @@ const authMiddleware = async (req: express.Request, res: express.Response, next:
   });
 
   
-  app.post("/api/onboarding", async (req, res) => {
-    let user = (req as any).user;
-    if (!user) return res.status(401).json({ error: "Unauthorized" });
-    
-    const { name, isTrial } = req.body;
-    
-    const trialDays = 15;
-    const endsAt = new Date();
-    endsAt.setDate(endsAt.getDate() + trialDays);
-    
-    const company: any = {
-      id: Date.now().toString(),
-      userId: user.id,
-      name: name || "Mi Nueva Empresa",
-      slug: (name || "mi-empresa").toLowerCase().replace(/[^a-z0-9]+/g, "-") + "-" + Date.now(),
-      plan: "free",
-      subscriptionStatus: isTrial ? "Prueba Gratuita" : "Activa",
-      subscriptionEndsAt: isTrial ? endsAt.toISOString().split('T')[0] : "2026-08-15",
-      businessType: "Restaurante",
-      color: "#8b5cf6",
-      whatsapp: "",
-      logo: "",
-      banner: "",
-      instagram: "",
-      facebook: "",
-      //  // currency
-    };
+  // NOTE: POST /api/onboarding used to be handled here directly. It now
+  // goes through OnboardingController -> SubscriptionService (mounted via
+  // mountSaasRoutes below), which is the single source of truth for
+  // starting the 15-business-day free trial. It's kept as a fallback for
+  // the in-memory/no-Supabase dev mode only.
+  if (!useSupabaseDb) {
+    app.post("/api/onboarding", async (req, res) => {
+      let user = (req as any).user;
+      if (!user) return res.status(401).json({ error: "Unauthorized" });
 
-    if (useSupabaseDb) {
-      const client = supabaseAdmin || getRequestSupabase(req);
-      if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+      const { name, isTrial } = req.body;
 
-      const { data, error } = await client
-        .from("companies")
-        .insert(stripUndefined(fromCompany(company)))
-        .select("*")
-        .single();
+      const trialDays = 15;
+      const endsAt = new Date();
+      endsAt.setDate(endsAt.getDate() + trialDays);
 
-      if (error) return res.status(500).json({ error: error.message });
-      return res.json(toCompany(data));
-    }
+      const company: any = {
+        id: Date.now().toString(),
+        userId: user.id,
+        name: name || "Mi Nueva Empresa",
+        slug: (name || "mi-empresa").toLowerCase().replace(/[^a-z0-9]+/g, "-") + "-" + Date.now(),
+        plan: "Emprendedor",
+        subscriptionStatus: isTrial ? "Prueba Gratuita" : "Activa",
+        subscriptionEndsAt: isTrial ? endsAt.toISOString().split('T')[0] : "2026-08-15",
+        businessType: "Restaurante",
+        color: "#8b5cf6",
+        whatsapp: "",
+        logo: "",
+        banner: "",
+        instagram: "",
+        facebook: "",
+      };
 
-    db.companies.push(company as any);
-    res.json(company);
-  });
+      db.companies.push(company as any);
+      res.json(company);
+    });
+  }
 
   // Get dashboard data for user
   app.get("/api/dashboard/:userId", async (req, res) => {
@@ -752,7 +761,7 @@ const authMiddleware = async (req: express.Request, res: express.Response, next:
           userId: user.id,
           name: "Mi Nueva Empresa",
           slug: "mi-empresa-" + Date.now(),
-          plan: "pro",
+          plan: "Emprendedor",
           subscriptionStatus: "Activa",
           subscriptionEndsAt: "2026-08-15",
           businessType: "Restaurante",
@@ -1480,55 +1489,13 @@ const authMiddleware = async (req: express.Request, res: express.Response, next:
 
   // Vite middleware for development
 
-  app.post('/api/approve-subscription', requireSuperAdmin, express.json(), async (req, res) => {
-    try {
-      const { email, businessName, plan, amount } = req.body;
-      
-      if (!email) {
-        return res.status(400).json({ error: 'Email is required' });
-      }
-
-      console.log('Sending approval email to:', email);
-      
-      if (resend) {
-        const { data, error } = await resend.emails.send({
-          from: 'WowSmart <onboarding@resend.dev>',
-          to: [email],
-          subject: '¡Tu suscripción a WowSmart ha sido aprobada!',
-          html: `
-            <div style="font-family: sans-serif; max-w: 600px; margin: 0 auto;">
-              <h1 style="color: #4f46e5;">¡Bienvenido a WowSmart!</h1>
-              <p>Hola,</p>
-              <p>Tu pago por el plan <strong>${plan}</strong> para <strong>${businessName}</strong> ha sido validado exitosamente.</p>
-              <p>Monto pagado: S/ ${amount}</p>
-              <div style="background-color: #f8fafc; padding: 20px; border-radius: 8px; margin: 20px 0;">
-                <h3 style="margin-top: 0;">Ya puedes acceder a tu panel de control:</h3>
-                <a href="${req.headers.origin || 'http://localhost:3000'}/dashboard" style="display: inline-block; background-color: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;">
-                  Ir al Dashboard
-                </a>
-              </div>
-              <p>Gracias por confiar en nosotros.</p>
-              <p>El equipo de WowSmart</p>
-            </div>
-          `
-        });
-        
-        if (error) {
-          console.error('Error sending email:', error);
-          return res.status(500).json({ error: error.message });
-        }
-        
-        return res.json({ success: true, data });
-      } else {
-        // Simulate sending if no key
-        console.log('Simulating email send (No RESEND_API_KEY found)');
-        return res.json({ success: true, simulated: true });
-      }
-    } catch (err: any) {
-      console.error(err);
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
+  // NOTE: /api/approve-subscription used to live here. It only sent an
+  // email and never touched the database, so a SuperAdmin "approval"
+  // never actually activated anything. It has been replaced by
+  // POST /api/superadmin/payments/:id/approve (see
+  // server/controllers/SubscriptionAdminController.ts), which activates
+  // the plan via SubscriptionService, records an audit log, AND sends the
+  // email through NotificationService.
 
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

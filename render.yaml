@@ -1,0 +1,35 @@
+# Render Blueprint (optional). If you already created the web service by hand
+# in the Render dashboard, you don't need this file -- just create the Cron
+# Job manually as described below. This file exists so the cron job's
+# configuration lives in the repo instead of only in someone's memory.
+#
+# Manual setup (no Blueprint):
+#   1. Render dashboard -> New -> Cron Job
+#   2. Command:  curl -fsS -X POST "$APP_URL/api/cron/check-trials" -H "Authorization: Bearer $CRON_SECRET"
+#   3. Schedule: 0 9 * * *   (09:00 UTC daily -- adjust to your timezone)
+#   4. Environment variables: APP_URL (e.g. https://wow-smart.com),
+#      CRON_SECRET (must match the web service's CRON_SECRET exactly)
+
+services:
+  - type: web
+    name: wowsmart
+    runtime: node
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+  - type: cron
+    name: wowsmart-check-trials
+    runtime: node
+    schedule: "0 9 * * *" # 09:00 UTC daily
+    buildCommand: "true"
+    startCommand: >
+      curl -fsS -X POST "$APP_URL/api/cron/check-trials"
+      -H "Authorization: Bearer $CRON_SECRET"
+    envVars:
+      - key: APP_URL
+        sync: false
+      - key: CRON_SECRET
+        sync: false

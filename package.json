@@ -9,7 +9,16 @@
     "start": "node dist/server.cjs",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "lint": "tsc --noEmit",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:backend": "vitest run --config vitest.backend.config.ts",
+    "test:frontend": "vitest run --config vitest.frontend.config.ts",
+    "test:integration": "vitest run --config vitest.backend.config.ts tests/backend/integration",
+    "test:coverage:backend": "vitest run --config vitest.backend.config.ts --coverage",
+    "test:coverage:frontend": "vitest run --config vitest.frontend.config.ts --coverage",
+    "test:coverage": "npm run test:coverage:backend && npm run test:coverage:frontend",
+    "test:e2e": "playwright test",
+    "ci:verify": "npm run lint && npm run typecheck && npm run test:coverage && npm run build"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -32,13 +41,21 @@
     "vite": "^6.2.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
+    "@types/supertest": "^7.2.1",
+    "@vitest/coverage-v8": "^4.1.10",
     "autoprefixer": "^10.4.21",
     "esbuild": "^0.25.0",
+    "jsdom": "^29.1.1",
+    "supertest": "^7.2.2",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
-    "vite": "^6.2.3"
+    "vite": "^6.2.3",
+    "vitest": "^4.1.10"
   }
 }
