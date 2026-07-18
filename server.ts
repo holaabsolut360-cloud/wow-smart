@@ -524,7 +524,8 @@ const isBillingRoute = (path: string) => (
   matchesPath(path, '/checkout') ||
   matchesPath(path, '/dashboard/me') ||
   matchesPath(path, '/plans') ||
-  matchesPath(path, '/payment-proof')
+  matchesPath(path, '/payment-proof') ||
+  matchesPath(path, '/subscription-payments')
 );
 
 const subscriptionGuard = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -612,12 +613,268 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     res.json({ authenticated: true });
   });
 
-  app.post("/api/superadmin/logout", (_req, res) => {
-    clearSuperAdminCookie(res);
-    res.json({ authenticated: false });
+  // Registrar un comprobante de pago desde el Checkout del cliente
+  app.post("/api/subscription-payments", async (req, res) => {
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ error: "Unauthorized" });
+
+    const { businessName, plan, amount, paymentMethod, reference } = req.body || {};
+    if (!businessName || !plan) {
+      return res.status(400).json({ error: "businessName y plan son requeridos" });
+    }
+
+    const client = supabaseAdmin || getRequestSupabase(req);
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    let companyId: string | null = null;
+    if (useSupabaseDb) {
+      const { data: companyRow } = await client
+        .from("companies")
+        .select("id")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      companyId = companyRow?.id || null;
+    }
+
+    const payload = {
+      user_id: user.id,
+      company_id: companyId,
+      business_name: businessName,
+      email: user.email || null,
+      plan,
+      amount: Number(amount) || 0,
+      payment_method: paymentMethod || null,
+      reference: reference || null,
+      status: "Pendiente",
+    };
+
+    if (!useSupabaseDb) {
+      return res.json({ id: Date.now().toString(), ...payload });
+    }
+
+    const { data, error } = await client
+      .from("subscription_payments")
+      .insert(payload)
+      .select("*")
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
   });
 
-  // Lista real de empresas para el panel SuperAdmin (reemplaza los datos de ejemplo del frontend)
+  // Listar pagos pendientes de revisión (panel SuperAdmin)
+  app.get("/api/superadmin/pagos-pendientes", requireSuperAdmin, async (_req, res) => {
+    if (!useSupabaseDb) return res.json({ data: [] });
+
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const { data, error } = await client
+      .from("subscription_payments")
+      .select("*")
+      .eq("status", "Pendiente")
+      .order("created_at", { ascending: true });
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    const pagos = (data || []).map((row: any) => ({
+      id: row.id,
+      businessName: row.business_name,
+      email: row.email,
+      plan: row.plan,
+      amount: Number(row.amount || 0),
+      method: row.payment_method,
+      reference: row.reference,
+      date: row.created_at,
+      userId: row.user_id,
+      companyId: row.company_id,
+    }));
+
+    res.json({ data: pagos });
+  });
+
+  // Aprobar un pago: activa/renueva la suscripción de la empresa y notifica por correo
+  app.post("/api/superadmin/pagos-pendientes/:id/aprobar", requireSuperAdmin, async (req, res) => {
+    if (!useSupabaseDb) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const { data: payment, error: fetchError } = await client
+      .from("subscription_payments")
+      .select("*")
+      .eq("id", req.params.id)
+      .single();
+
+    if (fetchError || !payment) return res.status(404).json({ error: "Pago no encontrado" });
+
+    const vencimiento = new Date();
+    vencimiento.setDate(vencimiento.getDate() + 30);
+
+    let companyId = payment.company_id;
+
+    if (companyId) {
+      await client
+        .from("companies")
+        .update({
+          plan: payment.plan,
+          subscription_status: "Activa",
+          subscription_ends_at: vencimiento.toISOString().split("T")[0],
+        })
+        .eq("id", companyId);
+    } else if (payment.user_id) {
+      // Si aún no tenía empresa asociada, se busca la más reciente del usuario
+      const { data: companyRow } = await client
+        .from("companies")
+        .select("id")
+        .eq("user_id", payment.user_id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (companyRow) {
+        companyId = companyRow.id;
+        await client
+          .from("companies")
+          .update({
+            plan: payment.plan,
+            subscription_status: "Activa",
+            subscription_ends_at: vencimiento.toISOString().split("T")[0],
+          })
+          .eq("id", companyId);
+      }
+    }
+
+    const { error: updateError } = await client
+      .from("subscription_payments")
+      .update({ status: "Aprobado", reviewed_at: new Date().toISOString(), company_id: companyId })
+      .eq("id", req.params.id);
+
+    if (updateError) return res.status(500).json({ error: updateError.message });
+
+    if (resend && payment.email) {
+      try {
+        await resend.emails.send({
+          from: 'WowSmart <onboarding@resend.dev>',
+          to: [payment.email],
+          subject: '¡Tu suscripción a WowSmart ha sido aprobada!',
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+              <h1 style="color: #4f46e5;">¡Bienvenido a WowSmart!</h1>
+              <p>Tu pago por el plan <strong>${payment.plan}</strong> para <strong>${payment.business_name}</strong> ha sido validado exitosamente.</p>
+              <p>Monto pagado: S/ ${payment.amount}</p>
+            </div>
+          `,
+        });
+      } catch (e) {
+        console.error('Error enviando correo de aprobación', e);
+      }
+    }
+
+    res.json({ success: true, companyId });
+  });
+
+  // Rechazar un pago pendiente
+  app.post("/api/superadmin/pagos-pendientes/:id/rechazar", requireSuperAdmin, async (req, res) => {
+    if (!useSupabaseDb) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const { error } = await client
+      .from("subscription_payments")
+      .update({ status: "Rechazado", reviewed_at: new Date().toISOString() })
+      .eq("id", req.params.id);
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true });
+  });
+
+  // Renovar la suscripción de una empresa por 30 días más
+  app.put("/api/superadmin/empresas/:id/renovar", requireSuperAdmin, async (req, res) => {
+    const vencimiento = new Date();
+    vencimiento.setDate(vencimiento.getDate() + 30);
+    const nuevaFecha = vencimiento.toISOString().split("T")[0];
+
+    if (!useSupabaseDb) {
+      const idx = db.companies.findIndex((c: any) => c.id === req.params.id);
+      if (idx === -1) return res.status(404).json({ error: "Empresa no encontrada" });
+      db.companies[idx].subscriptionStatus = "Activa";
+      db.companies[idx].subscriptionEndsAt = nuevaFecha;
+      return res.json({ id: db.companies[idx].id, estado: "Activa", vencimiento: nuevaFecha });
+    }
+
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const { data, error } = await client
+      .from("companies")
+      .update({ subscription_status: "Activa", subscription_ends_at: nuevaFecha })
+      .eq("id", req.params.id)
+      .select("id, subscription_status, subscription_ends_at")
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: "Empresa no encontrada" });
+
+    res.json({ id: data.id, estado: data.subscription_status, vencimiento: data.subscription_ends_at });
+  });
+
+
+  app.get("/api/superadmin/suscripciones", requireSuperAdmin, async (_req, res) => {
+    if (!useSupabaseDb) {
+      const suscripciones = db.companies.map((c: any) => ({
+        id: c.id,
+        empresa: c.name,
+        plan: c.plan,
+        estado: c.subscriptionStatus || "Activa",
+        vencimiento: c.subscriptionEndsAt || "-",
+        precio: 0,
+        metodoPago: "-",
+      }));
+      return res.json({ data: suscripciones });
+    }
+
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const [companiesResult, paymentsResult] = await Promise.all([
+      client.from("companies").select("id, name, plan, subscription_status, subscription_ends_at"),
+      client
+        .from("subscription_payments")
+        .select("company_id, amount, payment_method, created_at")
+        .eq("status", "Aprobado")
+        .order("created_at", { ascending: false }),
+    ]);
+
+    if (companiesResult.error) return res.status(500).json({ error: companiesResult.error.message });
+
+    const latestPaymentByCompany: Record<string, any> = {};
+    (paymentsResult.data || []).forEach((p: any) => {
+      if (p.company_id && !latestPaymentByCompany[p.company_id]) {
+        latestPaymentByCompany[p.company_id] = p;
+      }
+    });
+
+    const suscripciones = (companiesResult.data || []).map((c: any) => {
+      const latestPayment = latestPaymentByCompany[c.id];
+      return {
+        id: c.id,
+        empresa: c.name,
+        plan: c.plan,
+        estado: c.subscription_status || "Activa",
+        vencimiento: c.subscription_ends_at || "-",
+        precio: latestPayment ? Number(latestPayment.amount || 0) : 0,
+        metodoPago: latestPayment ? latestPayment.payment_method || "-" : "-",
+      };
+    });
+
+    res.json({ data: suscripciones });
+  });
+
+
   app.get("/api/superadmin/empresas", requireSuperAdmin, async (_req, res) => {
     if (!useSupabaseDb) {
       const empresas = db.companies.map((c: any) => ({
