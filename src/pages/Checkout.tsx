@@ -70,31 +70,48 @@ export default function Checkout() {
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
+  const submitPendingPayment = async (businessName: string, email: string) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
+      const res = await fetch('/api/subscription-payments', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          businessName,
+          plan: selectedPlan.name,
+          amount: selectedPlan.price,
+          paymentMethod,
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || 'No se pudo registrar el pago');
+      }
+    } catch (err: any) {
+      console.error('Error registrando pago pendiente', err);
+      alert(err.message || 'Hubo un problema al registrar tu comprobante. Contacta a soporte si el problema persiste.');
+    }
+  };
+
   
   const handlePaymentSubmit = async () => {
     setIsLoading(true);
     const { data: { user } } = await supabase.auth.getUser();
-    
-    setTimeout(() => {
+
+    if (user) {
+      await submitPendingPayment("Tu Empresa", user.email || "cliente@ejemplo.com");
       setIsLoading(false);
-      if (user) {
-        // Save pending payment for SuperAdmin
-        const pendingPayments = JSON.parse(localStorage.getItem('pendingPayments') || '[]');
-        pendingPayments.push({
-          id: Date.now().toString(),
-          businessName: "Tu Empresa",
-          email: user.email || "cliente@ejemplo.com",
-          plan: selectedPlan.name,
-          amount: selectedPlan.price,
-          method: paymentMethod,
-          date: new Date().toISOString()
-        });
-        localStorage.setItem('pendingPayments', JSON.stringify(pendingPayments));
-        setStep('success');
-      } else {
-        setStep('register');
-      }
-    }, 1500);
+      setStep('success');
+    } else {
+      setIsLoading(false);
+      setStep('register');
+    }
   };
 
 
@@ -115,19 +132,8 @@ export default function Checkout() {
       });
       
       if (error) throw error;
-      
-      // Save pending payment for SuperAdmin
-      const pendingPayments = JSON.parse(localStorage.getItem('pendingPayments') || '[]');
-      pendingPayments.push({
-        id: Date.now().toString(),
-        businessName: formData.businessName,
-        email: formData.email || "cliente@ejemplo.com",
-        plan: selectedPlan.name,
-        amount: selectedPlan.price,
-        method: paymentMethod,
-        date: new Date().toISOString()
-      });
-      localStorage.setItem('pendingPayments', JSON.stringify(pendingPayments));
+
+      await submitPendingPayment(formData.businessName, formData.email || "cliente@ejemplo.com");
 
       setStep('success');
     } catch (err: any) {
