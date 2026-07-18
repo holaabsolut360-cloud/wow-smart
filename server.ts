@@ -470,12 +470,12 @@ const stripUndefined = (value: Record<string, any>) =>
   Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
 
 const authMiddleware = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
-  const publicApiRoute =
-    req.path.startsWith('/api/catalog') ||
-    req.path.startsWith('/api/superadmin') ||
-    req.path === '/api/approve-subscription' ||
-    (req.method === 'GET' && req.path === '/api/products') ||
-    (req.method === 'POST' && req.path === '/api/orders');
+ const publicApiRoute =
+  req.path.startsWith('/catalog') ||
+  req.path.startsWith('/superadmin') ||
+  req.path === '/approve-subscription' ||
+  (req.method === 'GET' && req.path === '/products') ||
+  (req.method === 'POST' && req.path === '/orders');
 
   if (publicApiRoute) {
     return next();
