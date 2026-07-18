@@ -112,10 +112,32 @@ export default function SuperAdmin() {
     }
   };
 
+  const [dashboardStats, setDashboardStats] = useState<any>(null);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [dashboardError, setDashboardError] = useState('');
+
+  const fetchDashboard = async () => {
+    setDashboardLoading(true);
+    setDashboardError('');
+    try {
+      const res = await fetch('/api/superadmin/dashboard');
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || 'No se pudieron cargar las métricas');
+      }
+      setDashboardStats(await res.json());
+    } catch (err: any) {
+      setDashboardError(err.message || 'Error al cargar el dashboard');
+    } finally {
+      setDashboardLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (isAuthenticated) {
       fetchPagosPendientes();
       fetchSuscripciones();
+      fetchDashboard();
     }
   }, [isAuthenticated]);
 
@@ -150,7 +172,7 @@ export default function SuperAdmin() {
         const data = await res.json().catch(() => null);
         throw new Error(data?.error || 'No se pudo aprobar el pago');
       }
-      await Promise.all([fetchPagosPendientes(), fetchSuscripciones(), fetchEmpresas()]);
+      await Promise.all([fetchPagosPendientes(), fetchSuscripciones(), fetchEmpresas(), fetchDashboard()]);
       alert('Pago aprobado. La suscripción se ha activado y se ha enviado el comprobante por correo.');
     } catch (err: any) {
       alert(err.message || 'Error al aprobar el pago');
@@ -201,7 +223,7 @@ export default function SuperAdmin() {
         const data = await res.json().catch(() => null);
         throw new Error(data?.error || 'No se pudo renovar la suscripción');
       }
-      await Promise.all([fetchSuscripciones(), fetchEmpresas()]);
+      await Promise.all([fetchSuscripciones(), fetchEmpresas(), fetchDashboard()]);
       alert('Suscripción renovada por 30 días.');
     } catch (err: any) {
       alert(err.message || 'Error al renovar la suscripción');
@@ -416,26 +438,51 @@ export default function SuperAdmin() {
 
         <div className="flex-1 overflow-y-auto p-8">
           {activeTab === 'dashboard' && (
-            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
-              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                <div className="text-slate-500 text-sm font-bold mb-2">Total Empresas</div>
-                <div className="text-4xl font-black text-slate-800">1,245</div>
-                <div className="text-emerald-500 text-sm font-bold mt-2">+12% este mes</div>
-              </div>
-              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                <div className="text-slate-500 text-sm font-bold mb-2">Ingresos (MRR)</div>
-                <div className="text-4xl font-black text-slate-800">$45,200</div>
-                <div className="text-emerald-500 text-sm font-bold mt-2">+8% este mes</div>
-              </div>
-              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                <div className="text-slate-500 text-sm font-bold mb-2">Suscripciones Activas</div>
-                <div className="text-4xl font-black text-slate-800">890</div>
-                <div className="text-slate-400 text-sm font-bold mt-2">72% de retención</div>
-              </div>
-              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                <div className="text-slate-500 text-sm font-bold mb-2">Tickets Soporte</div>
-                <div className="text-4xl font-black text-slate-800">24</div>
-                <div className="text-rose-500 text-sm font-bold mt-2">5 urgentes</div>
+            <div>
+              {dashboardError && (
+                <div className="mb-4 p-3 rounded-lg bg-rose-50 text-rose-700 text-sm">{dashboardError}</div>
+              )}
+              <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                  <div className="text-slate-500 text-sm font-bold mb-2">Total Empresas</div>
+                  <div className="text-4xl font-black text-slate-800">
+                    {dashboardLoading ? '—' : (dashboardStats?.totalEmpresas ?? 0)}
+                  </div>
+                  {!dashboardLoading && (
+                    <div className={`text-sm font-bold mt-2 ${dashboardStats?.totalEmpresasCambioPct >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                      {dashboardStats?.totalEmpresasCambioPct >= 0 ? '+' : ''}{dashboardStats?.totalEmpresasCambioPct ?? 0}% este mes
+                    </div>
+                  )}
+                </div>
+                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                  <div className="text-slate-500 text-sm font-bold mb-2">Ingresos del Mes</div>
+                  <div className="text-4xl font-black text-slate-800">
+                    {dashboardLoading ? '—' : `S/ ${dashboardStats?.ingresosMes ?? 0}`}
+                  </div>
+                  {!dashboardLoading && (
+                    <div className={`text-sm font-bold mt-2 ${dashboardStats?.ingresosMesCambioPct >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                      {dashboardStats?.ingresosMesCambioPct >= 0 ? '+' : ''}{dashboardStats?.ingresosMesCambioPct ?? 0}% vs. mes anterior
+                    </div>
+                  )}
+                </div>
+                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                  <div className="text-slate-500 text-sm font-bold mb-2">Suscripciones Activas</div>
+                  <div className="text-4xl font-black text-slate-800">
+                    {dashboardLoading ? '—' : (dashboardStats?.suscripcionesActivas ?? 0)}
+                  </div>
+                  <div className="text-slate-400 text-sm font-bold mt-2">
+                    {dashboardLoading ? '' : `${dashboardStats?.retencionPct ?? 0}% de retención`}
+                  </div>
+                </div>
+                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                  <div className="text-slate-500 text-sm font-bold mb-2">Pagos Pendientes</div>
+                  <div className="text-4xl font-black text-slate-800">
+                    {dashboardLoading ? '—' : (dashboardStats?.pagosPendientes ?? 0)}
+                  </div>
+                  <div className="text-amber-500 text-sm font-bold mt-2">
+                    {dashboardLoading ? '' : 'por revisar'}
+                  </div>
+                </div>
               </div>
             </div>
           )}
