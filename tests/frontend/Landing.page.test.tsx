@@ -21,18 +21,18 @@ describe('Landing page', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('heading', { name: /Elige cómo quieres comenzar/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /Elige cómo quieres comenzar/i })).toBeTruthy();
     expect(
       screen.getByText(
         /Puedes probar WOW SMART completamente gratis durante 15 días o contratar el plan que mejor se adapte a tu negocio desde hoy\./i,
       ),
-    ).toBeInTheDocument();
+    ).toBeTruthy();
 
-    expect(screen.getByText(/¿Quieres probar primero\?/i)).toBeInTheDocument();
-    expect(screen.getByText(/Sin tarjeta de crédito • Configuración en menos de 2 minutos/i)).toBeInTheDocument();
+    expect(screen.getByText(/¿Quieres probar primero\?/i)).toBeTruthy();
+    expect(screen.getByText(/Sin tarjeta de crédito • Configuración en menos de 2 minutos/i)).toBeTruthy();
 
     const trialLink = screen.getByRole('link', { name: /Comenzar Prueba Gratuita/i });
-    expect(trialLink).toHaveTextContent('Comenzar Prueba Gratuita');
+    expect(trialLink.textContent).toContain('Comenzar Prueba Gratuita');
     expect(trialLink.getAttribute('href')).toContain('/auth?mode=register');
     expect(trialLink.getAttribute('href')).toContain('trial=true');
   });
@@ -44,9 +44,9 @@ describe('Landing page', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('link', { name: /Contratar Emprendedor/i })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Contratar Negocio/i })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Contratar Empresa/i })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Contratar Emprendedor/i })).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Contratar Negocio/i })).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Contratar Empresa/i })).toBeTruthy();
 
     expect(container.querySelector('a[href="/checkout/emprendedor"]')).not.toBeNull();
     expect(container.querySelector('a[href="/checkout/negocio"]')).not.toBeNull();
@@ -54,6 +54,6 @@ describe('Landing page', () => {
 
     expect(
       screen.getByText(/¿Necesitas comenzar hoy mismo\? Elige un plan y actívalo al instante\./i),
-    ).toBeInTheDocument();
+    ).toBeTruthy();
   });
 });
