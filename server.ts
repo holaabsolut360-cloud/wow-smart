@@ -875,6 +875,73 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
   });
 
 
+  // Métricas reales del Dashboard SuperAdmin
+  app.get("/api/superadmin/dashboard", requireSuperAdmin, async (_req, res) => {
+    if (!useSupabaseDb) {
+      return res.json({
+        totalEmpresas: db.companies.length,
+        totalEmpresasCambioPct: 0,
+        ingresosMes: 0,
+        ingresosMesCambioPct: 0,
+        suscripcionesActivas: db.companies.filter((c: any) => c.subscriptionStatus === "Activa").length,
+        retencionPct: 0,
+        pagosPendientes: 0,
+      });
+    }
+
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const now = new Date();
+    const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+
+    const [companiesResult, paymentsThisMonthResult, paymentsLastMonthResult, pendingPaymentsResult] = await Promise.all([
+      client.from("companies").select("id, subscription_status, created_at"),
+      client
+        .from("subscription_payments")
+        .select("amount")
+        .eq("status", "Aprobado")
+        .gte("created_at", startOfThisMonth.toISOString()),
+      client
+        .from("subscription_payments")
+        .select("amount")
+        .eq("status", "Aprobado")
+        .gte("created_at", startOfLastMonth.toISOString())
+        .lt("created_at", startOfThisMonth.toISOString()),
+      client.from("subscription_payments").select("id", { count: "exact", head: true }).eq("status", "Pendiente"),
+    ]);
+
+    if (companiesResult.error) return res.status(500).json({ error: companiesResult.error.message });
+
+    const companies = companiesResult.data || [];
+    const totalEmpresas = companies.length;
+    const empresasEsteMes = companies.filter((c: any) => c.created_at && new Date(c.created_at) >= startOfThisMonth).length;
+    const empresasMesPasado = companies.filter((c: any) => c.created_at && new Date(c.created_at) >= startOfLastMonth && new Date(c.created_at) < startOfThisMonth).length;
+    const totalEmpresasCambioPct = empresasMesPasado > 0
+      ? Math.round(((empresasEsteMes - empresasMesPasado) / empresasMesPasado) * 100)
+      : (empresasEsteMes > 0 ? 100 : 0);
+
+    const ingresosMes = (paymentsThisMonthResult.data || []).reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
+    const ingresosMesPasado = (paymentsLastMonthResult.data || []).reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
+    const ingresosMesCambioPct = ingresosMesPasado > 0
+      ? Math.round(((ingresosMes - ingresosMesPasado) / ingresosMesPasado) * 100)
+      : (ingresosMes > 0 ? 100 : 0);
+
+    const suscripcionesActivas = companies.filter((c: any) => c.subscription_status === "Activa").length;
+    const retencionPct = totalEmpresas > 0 ? Math.round((suscripcionesActivas / totalEmpresas) * 100) : 0;
+
+    res.json({
+      totalEmpresas,
+      totalEmpresasCambioPct,
+      ingresosMes,
+      ingresosMesCambioPct,
+      suscripcionesActivas,
+      retencionPct,
+      pagosPendientes: pendingPaymentsResult.count || 0,
+    });
+  });
+
   app.get("/api/superadmin/empresas", requireSuperAdmin, async (_req, res) => {
     if (!useSupabaseDb) {
       const empresas = db.companies.map((c: any) => ({
