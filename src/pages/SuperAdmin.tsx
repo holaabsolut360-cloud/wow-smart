@@ -35,12 +35,9 @@ export default function SuperAdmin() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [pendingPayments, setPendingPayments] = useState<any[]>([]);
-  const [empresas, setEmpresas] = useState([
-    { id: '1', nombre: 'Ferretería Perú', plan: 'Negocio', estado: 'Activa', registro: '2023-08-10' },
-    { id: '2', nombre: 'Boutique La Moda', plan: 'Emprendedor', estado: 'Suspendida', registro: '2023-09-01' },
-    { id: '3', nombre: 'Restaurante Sabor', plan: 'Empresa', estado: 'Activa', registro: '2023-09-15' },
-    { id: '4', nombre: 'TechStore PE', plan: 'Negocio', estado: 'Pendiente', registro: '2023-10-02' }
-  ]);
+  const [empresas, setEmpresas] = useState<any[]>([]);
+  const [empresasLoading, setEmpresasLoading] = useState(false);
+  const [empresasError, setEmpresasError] = useState('');
 
   const [suscripciones, setSuscripciones] = useState([
     { id: '1', empresa: 'Ferretería Perú', plan: 'Negocio', estado: 'Activa', vencimiento: '2023-11-10', precio: 39, metodoPago: 'Yape', referencia: '' },
@@ -88,6 +85,30 @@ export default function SuperAdmin() {
       setPendingPayments(payments);
     }
   }, [isAuthenticated, activeTab]);
+
+  const fetchEmpresas = async () => {
+    setEmpresasLoading(true);
+    setEmpresasError('');
+    try {
+      const res = await fetch('/api/superadmin/empresas');
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || 'No se pudieron cargar las empresas');
+      }
+      const { data } = await res.json();
+      setEmpresas(data || []);
+    } catch (err: any) {
+      setEmpresasError(err.message || 'Error al cargar empresas');
+    } finally {
+      setEmpresasLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      fetchEmpresas();
+    }
+  }, [isAuthenticated]);
 
   const handleApprovePayment = async (id: string, payment: any) => {
     const payments = pendingPayments.filter(p => p.id !== id);
@@ -146,13 +167,28 @@ export default function SuperAdmin() {
     alert('Pago rechazado. Se ha notificado al cliente para que suba un nuevo comprobante.');
   };
 
-  const handleActivarEmpresa = (id: string) => {
-    setEmpresas(prev => prev.map(emp => emp.id === id ? { ...emp, estado: 'Activa' } : emp));
+  const updateEmpresaEstado = async (id: string, estado: 'Activa' | 'Suspendida') => {
+    const previous = empresas;
+    // Actualización optimista para que la UI responda al instante
+    setEmpresas(prev => prev.map(emp => emp.id === id ? { ...emp, estado } : emp));
+    try {
+      const res = await fetch(`/api/superadmin/empresas/${id}/estado`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ estado }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || 'No se pudo actualizar el estado');
+      }
+    } catch (err: any) {
+      setEmpresas(previous); // revertir si falla
+      alert(err.message || 'Error al actualizar el estado de la empresa');
+    }
   };
 
-  const handleSuspenderEmpresa = (id: string) => {
-    setEmpresas(prev => prev.map(emp => emp.id === id ? { ...emp, estado: 'Suspendida' } : emp));
-  };
+  const handleActivarEmpresa = (id: string) => updateEmpresaEstado(id, 'Activa');
+  const handleSuspenderEmpresa = (id: string) => updateEmpresaEstado(id, 'Suspendida');
 
   const handleVerificarIzipay = (id: string) => {
     setSuscripciones(prev => prev.map(sub => {
@@ -489,6 +525,9 @@ export default function SuperAdmin() {
                   <p className="text-slate-500 text-sm">Administra las cuentas de las empresas registradas.</p>
                 </div>
               </div>
+              {empresasError && (
+                <div className="mx-6 mt-4 p-3 rounded-lg bg-rose-50 text-rose-700 text-sm">{empresasError}</div>
+              )}
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
@@ -501,6 +540,12 @@ export default function SuperAdmin() {
                     </tr>
                   </thead>
                   <tbody className="text-sm">
+                    {empresasLoading && (
+                      <tr><td colSpan={5} className="p-6 text-center text-slate-400">Cargando empresas...</td></tr>
+                    )}
+                    {!empresasLoading && empresas.length === 0 && !empresasError && (
+                      <tr><td colSpan={5} className="p-6 text-center text-slate-400">Aún no hay empresas registradas.</td></tr>
+                    )}
                     {empresas.map(empresa => (
                       <tr key={empresa.id} className="border-b border-slate-100 hover:bg-slate-50">
                         <td className="p-4 font-bold text-slate-800">{empresa.nombre}</td>
