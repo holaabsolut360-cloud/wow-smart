@@ -39,14 +39,11 @@ export default function SuperAdmin() {
   const [empresasLoading, setEmpresasLoading] = useState(false);
   const [empresasError, setEmpresasError] = useState('');
 
-  const [suscripciones, setSuscripciones] = useState([
-    { id: '1', empresa: 'Ferretería Perú', plan: 'Negocio', estado: 'Activa', vencimiento: '2023-11-10', precio: 39, metodoPago: 'Yape', referencia: '' },
-    { id: '2', empresa: 'Boutique La Moda', plan: 'Emprendedor', estado: 'Vencida', vencimiento: '2023-10-01', precio: 15, metodoPago: 'Transferencia', referencia: '' },
-    { id: '3', empresa: 'Restaurante Sabor', plan: 'Empresa', estado: 'Activa', vencimiento: '2023-10-15', precio: 79, metodoPago: 'Tarjeta', referencia: '' },
-    { id: '4', empresa: 'Comercial ABC', plan: 'Emprendedor', estado: 'Pendiente', vencimiento: '-', precio: 15, metodoPago: 'Izipay', referencia: '123456789' }
-  ]);
-  const [editingEmpresa, setEditingEmpresa] = useState<any>(null);
-  const [izipayVerifyTarget, setIzipayVerifyTarget] = useState<any>(null);
+  const [suscripciones, setSuscripciones] = useState<any[]>([]);
+  const [suscripcionesLoading, setSuscripcionesLoading] = useState(false);
+  const [suscripcionesError, setSuscripcionesError] = useState('');
+  const [pagosLoading, setPagosLoading] = useState(false);
+  const [pagosError, setPagosError] = useState('');
 
   const [paymentSettings, setPaymentSettings] = useState(() => {
     return JSON.parse(localStorage.getItem('paymentSettings') || '{"companyName": "WowSmart SAC", "accountNumber": "999 888 777"}');
@@ -79,12 +76,48 @@ export default function SuperAdmin() {
   };
 
 
+  const fetchPagosPendientes = async () => {
+    setPagosLoading(true);
+    setPagosError('');
+    try {
+      const res = await fetch('/api/superadmin/pagos-pendientes');
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || 'No se pudieron cargar los pagos pendientes');
+      }
+      const { data } = await res.json();
+      setPendingPayments(data || []);
+    } catch (err: any) {
+      setPagosError(err.message || 'Error al cargar pagos pendientes');
+    } finally {
+      setPagosLoading(false);
+    }
+  };
+
+  const fetchSuscripciones = async () => {
+    setSuscripcionesLoading(true);
+    setSuscripcionesError('');
+    try {
+      const res = await fetch('/api/superadmin/suscripciones');
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || 'No se pudieron cargar las suscripciones');
+      }
+      const { data } = await res.json();
+      setSuscripciones(data || []);
+    } catch (err: any) {
+      setSuscripcionesError(err.message || 'Error al cargar suscripciones');
+    } finally {
+      setSuscripcionesLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (isAuthenticated) {
-      const payments = JSON.parse(localStorage.getItem('pendingPayments') || '[]');
-      setPendingPayments(payments);
+      fetchPagosPendientes();
+      fetchSuscripciones();
     }
-  }, [isAuthenticated, activeTab]);
+  }, [isAuthenticated]);
 
   const fetchEmpresas = async () => {
     setEmpresasLoading(true);
@@ -110,61 +143,32 @@ export default function SuperAdmin() {
     }
   }, [isAuthenticated]);
 
-  const handleApprovePayment = async (id: string, payment: any) => {
-    const payments = pendingPayments.filter(p => p.id !== id);
-    setPendingPayments(payments);
-    localStorage.setItem('pendingPayments', JSON.stringify(payments));
-    
-    const nuevaEmpresa = {
-      id: Date.now().toString(),
-      nombre: payment.businessName,
-      plan: payment.plan,
-      estado: 'Activa',
-      registro: new Date().toISOString().split('T')[0]
-    };
-    
-    setEmpresas(prev => [nuevaEmpresa, ...prev]);
-    
-    const vencimiento = new Date();
-    vencimiento.setDate(vencimiento.getDate() + 30);
-    
-    const nuevaSuscripcion = {
-      id: Date.now().toString(),
-      empresa: payment.businessName,
-      plan: payment.plan,
-      estado: 'Activa',
-      vencimiento: vencimiento.toISOString().split('T')[0],
-      precio: payment.amount
-    };
-    
-    setSuscripciones(prev => [nuevaSuscripcion, ...prev]);
-
-    // Llama a la API para enviar correo
+  const handleApprovePayment = async (id: string) => {
     try {
-      await fetch('/api/approve-subscription', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          email: payment.email || 'cliente@ejemplo.com',
-          businessName: payment.businessName,
-          plan: payment.plan,
-          amount: payment.amount
-        })
-      });
-    } catch (e) {
-      console.error('Error enviando correo', e);
+      const res = await fetch(`/api/superadmin/pagos-pendientes/${id}/aprobar`, { method: 'POST' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || 'No se pudo aprobar el pago');
+      }
+      await Promise.all([fetchPagosPendientes(), fetchSuscripciones(), fetchEmpresas()]);
+      alert('Pago aprobado. La suscripción se ha activado y se ha enviado el comprobante por correo.');
+    } catch (err: any) {
+      alert(err.message || 'Error al aprobar el pago');
     }
-    
-    alert('Pago aprobado. La suscripción se ha activado y se ha enviado el comprobante por correo.');
   };
 
-  const handleRejectPayment = (id: string) => {
-    const payments = pendingPayments.filter(p => p.id !== id);
-    setPendingPayments(payments);
-    localStorage.setItem('pendingPayments', JSON.stringify(payments));
-    alert('Pago rechazado. Se ha notificado al cliente para que suba un nuevo comprobante.');
+  const handleRejectPayment = async (id: string) => {
+    try {
+      const res = await fetch(`/api/superadmin/pagos-pendientes/${id}/rechazar`, { method: 'POST' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || 'No se pudo rechazar el pago');
+      }
+      await fetchPagosPendientes();
+      alert('Pago rechazado. Se ha notificado al cliente para que suba un nuevo comprobante.');
+    } catch (err: any) {
+      alert(err.message || 'Error al rechazar el pago');
+    }
   };
 
   const updateEmpresaEstado = async (id: string, estado: 'Activa' | 'Suspendida') => {
@@ -190,37 +194,18 @@ export default function SuperAdmin() {
   const handleActivarEmpresa = (id: string) => updateEmpresaEstado(id, 'Activa');
   const handleSuspenderEmpresa = (id: string) => updateEmpresaEstado(id, 'Suspendida');
 
-  const handleVerificarIzipay = (id: string) => {
-    setSuscripciones(prev => prev.map(sub => {
-      if (sub.id === id) {
-        const vencimiento = new Date();
-        vencimiento.setDate(vencimiento.getDate() + 30);
-        return { ...sub, estado: 'Activa', vencimiento: vencimiento.toISOString().split('T')[0] };
+  const handleRenovarSuscripcion = async (id: string) => {
+    try {
+      const res = await fetch(`/api/superadmin/empresas/${id}/renovar`, { method: 'PUT' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || 'No se pudo renovar la suscripción');
       }
-      return sub;
-    }));
-    setIzipayVerifyTarget(null);
-    alert('Pago verificado por Izipay y suscripción activada.');
-  };
-
-  const handleSaveEmpresaData = (e: React.FormEvent) => {
-    e.preventDefault();
-    setSuscripciones(prev => prev.map(sub => sub.id === editingEmpresa.id ? { ...sub, empresa: editingEmpresa.empresa, plan: editingEmpresa.plan } : sub));
-    setEmpresas(prev => prev.map(emp => emp.nombre === editingEmpresa.originalName ? { ...emp, nombre: editingEmpresa.empresa, plan: editingEmpresa.plan } : emp));
-    setEditingEmpresa(null);
-    alert('Datos de la empresa actualizados exitosamente.');
-  };
-
-  const handleRenovarSuscripcion = (id: string) => {
-    setSuscripciones(prev => prev.map(sub => {
-      if (sub.id === id) {
-        const d = new Date(sub.vencimiento);
-        d.setDate(d.getDate() + 30);
-        return { ...sub, vencimiento: d.toISOString().split('T')[0], estado: 'Activa' };
-      }
-      return sub;
-    }));
-    alert('Suscripción renovada por 30 días.');
+      await Promise.all([fetchSuscripciones(), fetchEmpresas()]);
+      alert('Suscripción renovada por 30 días.');
+    } catch (err: any) {
+      alert(err.message || 'Error al renovar la suscripción');
+    }
   };
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -466,7 +451,9 @@ export default function SuperAdmin() {
                   {pendingPayments.length} Pendientes
                 </div>
               </div>
-              
+              {pagosError && (
+                <div className="mx-6 mt-4 p-3 rounded-lg bg-rose-50 text-rose-700 text-sm">{pagosError}</div>
+              )}
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
@@ -475,12 +462,20 @@ export default function SuperAdmin() {
                       <th className="p-4 font-bold border-b border-slate-200">Plan</th>
                       <th className="p-4 font-bold border-b border-slate-200">Monto</th>
                       <th className="p-4 font-bold border-b border-slate-200">Método</th>
-                      <th className="p-4 font-bold border-b border-slate-200">Comprobante</th>
                       <th className="p-4 font-bold border-b border-slate-200">Acciones</th>
                     </tr>
                   </thead>
                   <tbody className="text-sm">
-                    {pendingPayments.length > 0 ? (
+                    {pagosLoading && (
+                      <tr><td colSpan={5} className="p-6 text-center text-slate-400">Cargando pagos pendientes...</td></tr>
+                    )}
+                    {!pagosLoading && pendingPayments.length === 0 && !pagosError ? (
+                      <tr>
+                        <td colSpan={5} className="p-8 text-center text-slate-500">
+                          No hay pagos pendientes de validación en este momento.
+                        </td>
+                      </tr>
+                    ) : (
                       pendingPayments.map(payment => (
                         <tr key={payment.id} className="border-b border-slate-100 hover:bg-slate-50">
                           <td className="p-4 font-bold text-slate-800">{payment.businessName}</td>
@@ -488,14 +483,9 @@ export default function SuperAdmin() {
                             <span className="bg-indigo-50 text-indigo-700 px-2 py-1 rounded font-medium text-xs">{payment.plan}</span>
                           </td>
                           <td className="p-4 font-bold text-slate-800">S/ {payment.amount}</td>
-                          <td className="p-4 text-slate-600">{payment.method}</td>
-                          <td className="p-4">
-                            <button className="flex items-center gap-1 text-indigo-600 hover:text-indigo-800 font-medium">
-                              <ImageIcon className="w-4 h-4" /> Ver Imagen
-                            </button>
-                          </td>
+                          <td className="p-4 text-slate-600">{payment.method || '-'}</td>
                           <td className="p-4 flex gap-2">
-                            <button onClick={() => handleApprovePayment(payment.id, payment)} className="flex items-center gap-1 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 px-3 py-1.5 rounded-lg font-bold transition-colors">
+                            <button onClick={() => handleApprovePayment(payment.id)} className="flex items-center gap-1 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 px-3 py-1.5 rounded-lg font-bold transition-colors">
                               <CheckCircle className="w-4 h-4" /> Aprobar
                             </button>
                             <button onClick={() => handleRejectPayment(payment.id)} className="flex items-center gap-1 bg-rose-100 text-rose-700 hover:bg-rose-200 px-3 py-1.5 rounded-lg font-bold transition-colors">
@@ -504,12 +494,6 @@ export default function SuperAdmin() {
                           </td>
                         </tr>
                       ))
-                    ) : (
-                      <tr>
-                        <td colSpan={6} className="p-8 text-center text-slate-500">
-                          No hay pagos pendientes de validación en este momento.
-                        </td>
-                      </tr>
                     )}
                   </tbody>
                 </table>
@@ -583,6 +567,9 @@ export default function SuperAdmin() {
                   <p className="text-slate-500 text-sm">Gestiona renovaciones y estados de suscripción.</p>
                 </div>
               </div>
+              {suscripcionesError && (
+                <div className="mx-6 mt-4 p-3 rounded-lg bg-rose-50 text-rose-700 text-sm">{suscripcionesError}</div>
+              )}
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
@@ -591,17 +578,23 @@ export default function SuperAdmin() {
                       <th className="p-4 font-bold border-b border-slate-200">Plan</th>
                       <th className="p-4 font-bold border-b border-slate-200">Precio (S/)</th>
                       <th className="p-4 font-bold border-b border-slate-200">Estado</th>
-                      <th className="p-4 font-bold border-b border-slate-200">Método / Ref</th>
+                      <th className="p-4 font-bold border-b border-slate-200">Método</th>
                       <th className="p-4 font-bold border-b border-slate-200">Vencimiento</th>
                       <th className="p-4 font-bold border-b border-slate-200 text-right">Acciones</th>
                     </tr>
                   </thead>
                   <tbody className="text-sm">
+                    {suscripcionesLoading && (
+                      <tr><td colSpan={7} className="p-6 text-center text-slate-400">Cargando suscripciones...</td></tr>
+                    )}
+                    {!suscripcionesLoading && suscripciones.length === 0 && !suscripcionesError && (
+                      <tr><td colSpan={7} className="p-6 text-center text-slate-400">Aún no hay suscripciones registradas.</td></tr>
+                    )}
                     {suscripciones.map(sub => (
                       <tr key={sub.id} className="border-b border-slate-100 hover:bg-slate-50">
                         <td className="p-4 font-bold text-slate-800">{sub.empresa}</td>
                         <td className="p-4 text-slate-600">{sub.plan}</td>
-                        <td className="p-4 text-slate-600">{sub.precio}</td>
+                        <td className="p-4 text-slate-600">{sub.precio || '-'}</td>
                         <td className="p-4">
                           <span className={`px-2 py-1 rounded font-medium text-xs ${
                             sub.estado === 'Activa' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'
@@ -609,18 +602,10 @@ export default function SuperAdmin() {
                             {sub.estado}
                           </span>
                         </td>
-                        <td className="p-4 text-slate-500">
-                          {sub.metodoPago} {sub.referencia && <span className="block text-xs font-mono">{sub.referencia}</span>}
-                        </td>
+                        <td className="p-4 text-slate-500">{sub.metodoPago || '-'}</td>
                         <td className="p-4 text-slate-600">{sub.vencimiento}</td>
                         <td className="p-4 flex gap-2 justify-end">
-                          <button onClick={() => setEditingEmpresa({ ...sub, originalName: sub.empresa })} className="text-slate-600 hover:text-indigo-600 font-medium text-sm border border-slate-200 px-3 py-1 rounded-lg">Editar</button>
-                          {sub.estado === 'Pendiente' && sub.metodoPago === 'Izipay' && (
-                            <button onClick={() => setIzipayVerifyTarget(sub)} className="text-indigo-600 hover:text-indigo-800 font-medium text-sm bg-indigo-50 px-3 py-1 rounded-lg">Verificar Izipay</button>
-                          )}
-                          {(sub.estado === 'Activa' || sub.estado === 'Vencida') && (
-                            <button onClick={() => handleRenovarSuscripcion(sub.id)} className="text-emerald-600 hover:text-emerald-800 font-medium text-sm bg-emerald-50 px-3 py-1 rounded-lg">Renovar</button>
-                          )}
+                          <button onClick={() => handleRenovarSuscripcion(sub.id)} className="text-emerald-600 hover:text-emerald-800 font-medium text-sm bg-emerald-50 px-3 py-1 rounded-lg">Renovar 30 días</button>
                         </td>
                       </tr>
                     ))}
@@ -694,81 +679,6 @@ export default function SuperAdmin() {
           )}
         </div>
       </main>
-
-      {/* Modal Editar Empresa */}
-      <AnimatePresence>
-        {editingEmpresa && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setEditingEmpresa(null)}></div>
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-2xl shadow-xl w-full max-w-md relative z-10 overflow-hidden"
-            >
-              <div className="p-6 border-b border-slate-200">
-                <h2 className="text-xl font-bold text-slate-800">Editar Datos de Empresa</h2>
-              </div>
-              <form onSubmit={handleSaveEmpresaData} className="p-6 space-y-4">
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">Nombre de la Empresa</label>
-                  <input 
-                    type="text" 
-                    value={editingEmpresa.empresa}
-                    onChange={e => setEditingEmpresa({...editingEmpresa, empresa: e.target.value})}
-                    className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">Plan</label>
-                  <select 
-                    value={editingEmpresa.plan}
-                    onChange={e => setEditingEmpresa({...editingEmpresa, plan: e.target.value})}
-                    className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
-                  >
-                    <option value="Emprendedor">Emprendedor</option>
-                    <option value="Negocio">Negocio</option>
-                    <option value="Empresa">Empresa</option>
-                  </select>
-                </div>
-                <div className="flex gap-4 pt-4">
-                  <button type="button" onClick={() => setEditingEmpresa(null)} className="flex-1 px-4 py-3 border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition-colors">Cancelar</button>
-                  <button type="submit" className="flex-1 px-4 py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-colors">Guardar Cambios</button>
-                </div>
-              </form>
-            </motion.div>
-          </div>
-        )}
-
-        {izipayVerifyTarget && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIzipayVerifyTarget(null)}></div>
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-2xl shadow-xl w-full max-w-sm relative z-10 overflow-hidden"
-            >
-              <div className="p-6 text-center">
-                <div className="w-16 h-16 bg-indigo-50 text-indigo-500 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <ShieldCheck className="w-8 h-8" />
-                </div>
-                <h2 className="text-xl font-bold text-slate-800 mb-2">Verificar Pago Izipay</h2>
-                <p className="text-slate-500 mb-6">
-                  ¿Confirmas que se recibió el pago en Izipay para la empresa <strong>{izipayVerifyTarget.empresa}</strong> por el monto de <strong>S/ {izipayVerifyTarget.precio}</strong>?
-                  <br /><br />
-                  Ref: <span className="font-mono text-slate-800 bg-slate-100 px-2 py-1 rounded">{izipayVerifyTarget.referencia}</span>
-                </p>
-                <div className="flex gap-3">
-                  <button onClick={() => setIzipayVerifyTarget(null)} className="flex-1 px-4 py-3 border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 transition-colors">Cancelar</button>
-                  <button onClick={() => handleVerificarIzipay(izipayVerifyTarget.id)} className="flex-1 px-4 py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-colors">Confirmar Pago</button>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }
