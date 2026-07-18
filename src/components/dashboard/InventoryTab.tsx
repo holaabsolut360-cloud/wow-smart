@@ -12,6 +12,7 @@ interface InventoryTabProps {
 
 export function InventoryTab({ company }: InventoryTabProps) {
   const queryClient = useQueryClient();
+  const currency = company?.currency || 'S/';
   const [isAddingMovement, setIsAddingMovement] = useState(false);
   const [newMovement, setNewMovement] = useState({ type: 'Entrada', qty: 1, date: new Date().toISOString().split('T')[0], productId: '', notes: '' });
 
@@ -119,7 +120,7 @@ export function InventoryTab({ company }: InventoryTabProps) {
           <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl"><TrendingUp className="w-6 h-6" /></div>
           <div>
             <p className="text-sm font-medium text-slate-500">Valor Inventario</p>
-            <p className="text-2xl font-bold text-slate-900">${inventoryAnalytics.totalValue?.toFixed(2)}</p>
+            <p className="text-2xl font-bold text-slate-900">{currency} {(Number(inventoryAnalytics.totalValue) || 0).toFixed(2)}</p>
           </div>
         </div>
       </div>

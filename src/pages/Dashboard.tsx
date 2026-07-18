@@ -341,8 +341,8 @@ export default function Dashboard() {
           <ExpensesTab company={company} />
         ) : activeTab === 'settings' ? (
           <SettingsTab company={company} setCompany={setCompany as any} />
-                ) : activeTab === 'crm' ? (
-          <CrmTab />
+                    ) : activeTab === 'crm' ? (
+                  <CrmTab company={company} />
         ) : activeTab === 'debts' ? (
           <DebtsTab company={company} />
         ) : activeTab === 'categories' ? (
