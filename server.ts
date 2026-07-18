@@ -479,8 +479,81 @@ const authMiddleware = async (req: express.Request, res: express.Response, next:
   next();
 };
 
+const matchesPath = (path: string, base: string) => path === base || path.startsWith(`${base}/`);
+
+const isBillingRoute = (path: string) => (
+  matchesPath(path, '/checkout') ||
+  matchesPath(path, '/dashboard/me') ||
+  matchesPath(path, '/plans') ||
+  matchesPath(path, '/payment-proof')
+);
+
+const subscriptionGuard = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const user = (req as any).user;
+  if (!user) return next();
+
+  const path = req.path;
+  // Never block auth/session endpoints in this guard.
+  if (matchesPath(path, '/superadmin')) return next();
+
+  let company: any = null;
+
+  if (useSupabaseDb) {
+    const client = getRequestSupabase(req);
+    if (!client) return next();
+
+    const { data } = await client
+      .from('companies')
+      .select('id, plan, subscription_status, subscription_ends_at, user_id')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    company = data || null;
+  } else {
+    company = db.companies.find((c: any) => c.userId === user.id) || null;
+  }
+
+  if (!company) return next();
+
+  const status = useSupabaseDb ? company.subscription_status : company.subscriptionStatus;
+  const endsAtRaw = useSupabaseDb ? company.subscription_ends_at : company.subscriptionEndsAt;
+  const isTrialExpired = status === 'Prueba Gratuita' && !!endsAtRaw && new Date(endsAtRaw) < new Date();
+
+  if (isTrialExpired) {
+    if (useSupabaseDb) {
+      const client = getRequestSupabase(req);
+      if (client) {
+        await client
+          .from('companies')
+          .update({ subscription_status: 'Vencida' })
+          .eq('id', company.id)
+          .eq('user_id', user.id);
+      }
+      company.subscription_status = 'Vencida';
+    } else {
+      company.subscriptionStatus = 'Vencida';
+    }
+  }
+
+  const effectiveStatus = useSupabaseDb ? company.subscription_status : company.subscriptionStatus;
+  const isBlocked = effectiveStatus === 'Vencida' || effectiveStatus === 'Suspendida';
+
+  if (isBlocked && !isBillingRoute(path)) {
+    return res.status(402).json({
+      error: 'Tu suscripción está vencida. Debes activar uno de los planes para continuar.',
+      code: 'SUBSCRIPTION_REQUIRED',
+      subscriptionStatus: effectiveStatus,
+    });
+  }
+
+  next();
+};
+
 
   app.use('/api', authMiddleware);
+  app.use('/api', subscriptionGuard);
 
   app.get("/api/superadmin/session", (req, res) => {
     res.json({ authenticated: isSuperAdminRequest(req) });
@@ -565,7 +638,8 @@ const authMiddleware = async (req: express.Request, res: express.Response, next:
       userId: user.id,
       name: name || "Mi Nueva Empresa",
       slug: (name || "mi-empresa").toLowerCase().replace(/[^a-z0-9]+/g, "-") + "-" + Date.now(),
-      plan: "free",
+      // Keep billing plan compatible with DB CHECK constraint (companies_plan_check).
+      plan: "Emprendedor",
       subscriptionStatus: isTrial ? "Prueba Gratuita" : "Activa",
       subscriptionEndsAt: isTrial ? endsAt.toISOString().split('T')[0] : "2026-08-15",
       businessType: "Restaurante",
