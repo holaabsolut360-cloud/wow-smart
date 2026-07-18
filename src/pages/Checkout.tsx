@@ -3,6 +3,15 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { CheckCircle2, ArrowRight, ArrowLeft, ShieldCheck, CreditCard, Upload, Mail } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { apiClient } from '../services/api';
+
+// Display names shown to the customer differ from the exact values the
+// `companies.plan` / `payments.plan` CHECK constraints accept in Supabase.
+const PLAN_BILLING_KEY: Record<string, 'Emprendedor' | 'Negocio' | 'Empresa'> = {
+  emprendedor: 'Emprendedor',
+  negocio: 'Negocio',
+  empresa: 'Empresa',
+};
 
 const PLAN_DETAILS = {
   'emprendedor': {
@@ -44,6 +53,7 @@ export default function Checkout() {
   const navigate = useNavigate();
   
   const selectedPlan = PLAN_DETAILS[(planId as keyof typeof PLAN_DETAILS) || 'negocio'];
+  const planKey = PLAN_BILLING_KEY[(planId as string) || 'negocio'] || 'Negocio';
   
   const [step, setStep] = useState<CheckoutStep>('summary');
   const [formData, setFormData] = useState({
@@ -55,6 +65,48 @@ export default function Checkout() {
   const [paymentMethod, setPaymentMethod] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [paymentSettings, setPaymentSettings] = useState({ companyName: "WowSmart SAC", accountNumber: "999 888 777" });
+  const [needsEmailConfirmation, setNeedsEmailConfirmation] = useState(false);
+  const [proofFile, setProofFile] = useState<File | null>(null);
+  const [proofPreviewUrl, setProofPreviewUrl] = useState<string | null>(null);
+  const [proofError, setProofError] = useState<string | null>(null);
+
+  const ALLOWED_PROOF_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+  const MAX_PROOF_SIZE_MB = 5;
+
+  const handleProofFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    setProofError(null);
+    if (!file) {
+      setProofFile(null);
+      setProofPreviewUrl(null);
+      return;
+    }
+    if (!ALLOWED_PROOF_TYPES.includes(file.type)) {
+      setProofError('Solo se aceptan archivos JPG, PNG, WEBP o PDF.');
+      e.target.value = '';
+      return;
+    }
+    if (file.size > MAX_PROOF_SIZE_MB * 1024 * 1024) {
+      setProofError(`El archivo supera el límite de ${MAX_PROOF_SIZE_MB}MB.`);
+      e.target.value = '';
+      return;
+    }
+    setProofFile(file);
+    setProofPreviewUrl(file.type === 'application/pdf' ? null : URL.createObjectURL(file));
+  };
+
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        // Strip the "data:<mime>;base64," prefix -- the backend expects raw base64.
+        resolve(result.split(',')[1] || '');
+      };
+      reader.onerror = () => reject(new Error('No se pudo leer el archivo'));
+      reader.readAsDataURL(file);
+    });
+  };
 
   React.useEffect(() => {
     const saved = localStorage.getItem('paymentSettings');
@@ -71,37 +123,62 @@ export default function Checkout() {
   };
 
   
+  /** Returns the current user's company id, creating one (no trial) if they don't have one yet. */
+  const ensureCompanyId = async (businessName: string): Promise<string> => {
+    try {
+      const dashboard = await apiClient.get('/api/dashboard/me');
+      if (dashboard?.company?.id) return dashboard.company.id;
+    } catch (err) {
+      // No company yet for this user -- fall through and create one.
+    }
+    const company = await apiClient.post('/api/onboarding', { name: businessName || 'Mi Empresa', isTrial: false });
+    return company.id;
+  };
+
   const handlePaymentSubmit = async () => {
+    if (!paymentMethod.includes('Tarjeta') && !proofFile) {
+      setProofError('Debes subir tu comprobante de pago para continuar.');
+      return;
+    }
+
     setIsLoading(true);
-    const { data: { user } } = await supabase.auth.getUser();
-    
-    setTimeout(() => {
-      setIsLoading(false);
-      if (user) {
-        // Save pending payment for SuperAdmin
-        const pendingPayments = JSON.parse(localStorage.getItem('pendingPayments') || '[]');
-        pendingPayments.push({
-          id: Date.now().toString(),
-          businessName: "Tu Empresa",
-          email: user.email || "cliente@ejemplo.com",
-          plan: selectedPlan.name,
-          amount: selectedPlan.price,
-          method: paymentMethod,
-          date: new Date().toISOString()
-        });
-        localStorage.setItem('pendingPayments', JSON.stringify(pendingPayments));
-        setStep('success');
-      } else {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
         setStep('register');
+        return;
       }
-    }, 1500);
+
+      const companyId = await ensureCompanyId(formData.businessName || 'Tu Empresa');
+      const proofFilePayload = proofFile
+        ? { base64Data: await fileToBase64(proofFile), mimeType: proofFile.type, fileName: proofFile.name }
+        : undefined;
+
+      await apiClient.post('/api/checkout/submit-payment', {
+        companyId,
+        plan: planKey,
+        method: paymentMethod,
+        proofFile: proofFilePayload,
+      });
+      setStep('success');
+    } catch (err: any) {
+      alert(err.message || 'Error al registrar el pago');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!paymentMethod.includes('Tarjeta') && !proofFile) {
+      setProofError('Debes subir tu comprobante de pago para continuar.');
+      return;
+    }
+
     setIsLoading(true);
-    
+
     try {
       const { data, error } = await supabase.auth.signUp({
         email: formData.email,
@@ -113,21 +190,29 @@ export default function Checkout() {
           }
         }
       });
-      
+
       if (error) throw error;
-      
-      // Save pending payment for SuperAdmin
-      const pendingPayments = JSON.parse(localStorage.getItem('pendingPayments') || '[]');
-      pendingPayments.push({
-        id: Date.now().toString(),
-        businessName: formData.businessName,
-        email: formData.email || "cliente@ejemplo.com",
-        plan: selectedPlan.name,
-        amount: selectedPlan.price,
+
+      if (!data.session) {
+        // Email confirmation is required before we have a session to create
+        // the company/payment with. The payment can be completed from the
+        // dashboard's upgrade banner once the user confirms and logs in.
+        setNeedsEmailConfirmation(true);
+        setStep('success');
+        return;
+      }
+
+      const companyId = await ensureCompanyId(formData.businessName);
+      const proofFilePayload = proofFile
+        ? { base64Data: await fileToBase64(proofFile), mimeType: proofFile.type, fileName: proofFile.name }
+        : undefined;
+
+      await apiClient.post('/api/checkout/submit-payment', {
+        companyId,
+        plan: planKey,
         method: paymentMethod,
-        date: new Date().toISOString()
+        proofFile: proofFilePayload,
       });
-      localStorage.setItem('pendingPayments', JSON.stringify(pendingPayments));
 
       setStep('success');
     } catch (err: any) {
@@ -388,15 +473,42 @@ export default function Checkout() {
 
                         <div className="border-t border-slate-100 pt-8">
                           <label className="block text-sm font-bold text-slate-700 mb-4 text-center">Sube tu comprobante de pago</label>
-                          <div className="border-2 border-dashed border-slate-300 rounded-2xl p-6 text-center hover:bg-slate-50 transition-colors cursor-pointer mb-6 relative group">
-                            <input type="file" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
-                            <Upload className="w-8 h-8 text-slate-400 mx-auto mb-2 group-hover:text-indigo-500 transition-colors" />
-                            <p className="text-sm font-medium text-slate-600">Haz clic para seleccionar archivo</p>
-                            <p className="text-xs text-slate-400 mt-1">PNG, JPG o PDF (Max. 5MB)</p>
-                          </div>
+
+                          {proofFile ? (
+                            <div className="border-2 border-emerald-200 bg-emerald-50/50 rounded-2xl p-4 mb-4 flex items-center gap-4">
+                              {proofPreviewUrl ? (
+                                <img src={proofPreviewUrl} alt="Vista previa del comprobante" className="w-16 h-16 object-cover rounded-lg border border-slate-200" />
+                              ) : (
+                                <div className="w-16 h-16 rounded-lg border border-slate-200 bg-white flex items-center justify-center text-xs font-bold text-slate-500">PDF</div>
+                              )}
+                              <div className="flex-1 text-left min-w-0">
+                                <p className="text-sm font-bold text-slate-800 truncate">{proofFile.name}</p>
+                                <p className="text-xs text-slate-500">{(proofFile.size / 1024).toFixed(0)} KB</p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => { setProofFile(null); setProofPreviewUrl(null); }}
+                                className="text-xs font-bold text-rose-600 hover:text-rose-800 px-2"
+                              >
+                                Quitar
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="border-2 border-dashed border-slate-300 rounded-2xl p-6 text-center hover:bg-slate-50 transition-colors cursor-pointer mb-4 relative group">
+                              <input type="file" accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf" onChange={handleProofFileChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                              <Upload className="w-8 h-8 text-slate-400 mx-auto mb-2 group-hover:text-indigo-500 transition-colors" />
+                              <p className="text-sm font-medium text-slate-600">Haz clic para seleccionar archivo</p>
+                              <p className="text-xs text-slate-400 mt-1">PNG, JPG, WEBP o PDF (Max. {MAX_PROOF_SIZE_MB}MB)</p>
+                            </div>
+                          )}
+
+                          {proofError && (
+                            <p className="text-sm text-rose-600 font-medium mb-4 text-center">{proofError}</p>
+                          )}
+
                           <button 
                             onClick={handlePaymentSubmit}
-                            disabled={isLoading}
+                            disabled={isLoading || !proofFile}
                             className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md transition-all flex justify-center items-center gap-2 disabled:opacity-70"
                           >
                             {isLoading ? (
@@ -527,10 +639,11 @@ export default function Checkout() {
                 </div>
 
                 <p className="text-slate-600 mb-8 max-w-md mx-auto leading-relaxed">
-                  {paymentMethod.includes('Tarjeta') ? 
-                    <><strong className="text-slate-800 block mb-2">¡Pago procesado exitosamente por Izipay!</strong> Tu cuenta ha sido activada y el pago ha sido registrado. Puedes acceder a tu panel de control ahora mismo.</> : 
-                    <>Hemos recibido tu comprobante de pago. Nuestro equipo lo está verificando y <strong>activará tu cuenta en breve</strong>. Recibirás una notificación por correo y WhatsApp cuando esté listo.</>
-                  }
+                  {needsEmailConfirmation ? (
+                    <><strong className="text-slate-800 block mb-2">Confirma tu correo para continuar.</strong> Te enviamos un enlace de confirmación a {formData.email}. Una vez que confirmes e inicies sesión, podrás completar tu pago desde el panel.</>
+                  ) : (
+                    <>Hemos recibido tu comprobante de pago. Nuestro equipo lo está verificando y <strong>activará tu cuenta en breve</strong>. Recibirás una notificación por correo cuando esté listo.</>
+                  )}
                 </p>
 
                 <Link 
