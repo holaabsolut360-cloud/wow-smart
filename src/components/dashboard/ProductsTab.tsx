@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { ExternalLink, Plus, Trash2, Edit2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import * as XLSX from 'xlsx';
 import { Company, Product, Category } from '../../types';
 import { ImageUpload } from '../ImageUpload';
 import { apiClient } from "../../services/api";
@@ -15,6 +16,9 @@ interface ProductsTabProps {
 export function ProductsTab({ company, categories }: ProductsTabProps) {
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importMessage, setImportMessage] = useState('');
+  const [importError, setImportError] = useState('');
   const limit = 20;
 
   const { data: productsData, isLoading } = useQuery({
@@ -62,6 +66,102 @@ export function ProductsTab({ company, categories }: ProductsTabProps) {
   const [isAdding, setIsAdding] = useState(false);
   const [newProd, setNewProd] = useState<Partial<Product>>({});
 
+  const normalize = (value: string) =>
+    value
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/\s+/g, '_')
+      .trim();
+
+  const getField = (row: Record<string, any>, keys: string[]) => {
+    for (const key of Object.keys(row)) {
+      const normalizedKey = normalize(key);
+      if (keys.includes(normalizedKey)) return row[key];
+    }
+    return undefined;
+  };
+
+  const toNumber = (value: any): number | undefined => {
+    if (value === null || value === undefined || value === '') return undefined;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+    const normalized = String(value).replace(/[^0-9,.-]/g, '').replace(',', '.');
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  };
+
+  const handleBulkImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !company?.id) return;
+
+    setImportError('');
+    setImportMessage('');
+    setIsImporting(true);
+
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      const firstSheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[firstSheetName];
+      const rows = XLSX.utils.sheet_to_json<Record<string, any>>(worksheet, { defval: '' });
+
+      if (!rows.length) {
+        throw new Error('El archivo no contiene filas con datos.');
+      }
+
+      const parsedProducts: Partial<Product>[] = [];
+      let skipped = 0;
+
+      for (const row of rows) {
+        const name = String(getField(row, ['nombre', 'name', 'producto']) || '').trim();
+        const price = toNumber(getField(row, ['precio', 'price']));
+
+        if (!name || price === undefined) {
+          skipped += 1;
+          continue;
+        }
+
+        const salePrice = toNumber(getField(row, ['precio_oferta', 'sale_price', 'saleprice']));
+        const stock = toNumber(getField(row, ['stock', 'cantidad', 'inventario']));
+
+        parsedProducts.push({
+          name,
+          category: String(getField(row, ['categoria', 'category']) || 'General').trim(),
+          price,
+          salePrice,
+          stock,
+          sku: String(getField(row, ['sku', 'codigo', 'codigo_interno']) || '').trim(),
+          barcode: String(getField(row, ['barcode', 'codigo_barras']) || '').trim(),
+          desc: String(getField(row, ['descripcion', 'description']) || '').trim(),
+          image: String(getField(row, ['imagen', 'image']) || '').trim(),
+        });
+      }
+
+      if (!parsedProducts.length) {
+        throw new Error('No se encontraron productos válidos. Asegúrate de incluir columnas de nombre y precio.');
+      }
+
+      const results = await Promise.allSettled(
+        parsedProducts.map((product) =>
+          apiClient.post('/api/products', { companyId: company.id, ...product }),
+        ),
+      );
+
+      const successCount = results.filter((result) => result.status === 'fulfilled').length;
+      const failCount = results.length - successCount;
+
+      queryClient.invalidateQueries({ queryKey: ['products', company?.id] });
+      setImportMessage(
+        `Importación completada: ${successCount} producto(s) creados${skipped ? `, ${skipped} fila(s) omitidas` : ''}${failCount ? `, ${failCount} fallidas` : ''}.`,
+      );
+    } catch (err: any) {
+      setImportError(err.message || 'No se pudo procesar el archivo.');
+    } finally {
+      setIsImporting(false);
+      e.target.value = '';
+    }
+  };
+
   const handleAddProduct = (e: React.FormEvent) => {
     e.preventDefault();
     addMutation.mutate(newProd);
@@ -94,6 +194,16 @@ export function ProductsTab({ company, categories }: ProductsTabProps) {
                   <ExternalLink className="w-5 h-5" />
                   Ver Catálogo
                 </Link>
+                <label className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-slate-200 bg-white text-slate-700 font-semibold hover:bg-slate-50 shadow-sm transition-colors cursor-pointer">
+                  <input
+                    type="file"
+                    accept=".csv,.xlsx,.xls"
+                    onChange={handleBulkImport}
+                    className="hidden"
+                    disabled={isImporting}
+                  />
+                  {isImporting ? 'Importando...' : 'Importar CSV/Excel'}
+                </label>
                 <button 
                   onClick={() => { setNewProd({}); setIsAdding(true); }}
                   className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700 shadow-sm transition-colors"
@@ -103,6 +213,12 @@ export function ProductsTab({ company, categories }: ProductsTabProps) {
                 </button>
               </div>
             </header>
+
+            {(importMessage || importError) && (
+              <div className={`mb-6 p-4 rounded-xl border ${importError ? 'bg-rose-50 border-rose-200 text-rose-700' : 'bg-emerald-50 border-emerald-200 text-emerald-700'}`}>
+                {importError || importMessage}
+              </div>
+            )}
 
             {isAdding && (
               <motion.div 
@@ -135,7 +251,7 @@ export function ProductsTab({ company, categories }: ProductsTabProps) {
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-1">Precio (S/)</label>
+                    <label className="block text-sm font-bold text-slate-700 mb-1">Precio ({company?.currency || 'S/'})</label>
                     <input 
                       required
                       type="number" 
@@ -146,7 +262,7 @@ export function ProductsTab({ company, categories }: ProductsTabProps) {
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-1">Precio Oferta (S/) - Opcional</label>
+                    <label className="block text-sm font-bold text-slate-700 mb-1">Precio Oferta ({company?.currency || 'S/'}) - Opcional</label>
                     <input 
                       type="number" 
                       value={newProd.salePrice || ''}
