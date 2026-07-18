@@ -223,7 +223,16 @@ const getCookieValue = (req: express.Request, name: string) => {
 };
 
 const isSuperAdminRequest = (req: express.Request) => {
-  const token = getCookieValue(req, superAdminCookieName);
+  const rawToken = getCookieValue(req, superAdminCookieName);
+  if (!rawToken) return false;
+
+  let token = rawToken;
+  try {
+    token = decodeURIComponent(rawToken);
+  } catch {
+    // Si no se puede decodificar, se compara tal cual llegó.
+  }
+
   return Boolean(superAdminSessionSecret && token === superAdminSessionSecret);
 };
 
