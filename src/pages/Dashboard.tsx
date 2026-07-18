@@ -83,6 +83,11 @@ export default function Dashboard() {
         setLoading(false);
       })
       .catch((err: any) => {
+        if (err.status === 402) {
+          alert('Tu prueba gratuita ha finalizado. Elige un plan para continuar.');
+          navigate('/checkout/negocio');
+          return;
+        }
         if (err.status === 404 || err.message?.includes('Company not found')) {
           navigate('/auth?mode=onboarding');
           return;
