@@ -4,6 +4,7 @@ import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { Resend } from 'resend';
+import crypto from "crypto";
 
 const isProduction = process.env.NODE_ENV === "production";
 const requiredServerEnv = ["SUPABASE_URL", "SUPABASE_ANON_KEY"];
@@ -258,6 +259,45 @@ const requireSuperAdmin = (req: express.Request, res: express.Response, next: ex
   }
 
   next();
+};
+
+const hashPassword = (password: string) => {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
+  return { hash, salt };
+};
+
+const verifyPassword = (password: string, hash: string, salt: string) => {
+  try {
+    const candidate = crypto.scryptSync(password, salt, 64).toString("hex");
+    return crypto.timingSafeEqual(Buffer.from(candidate, "hex"), Buffer.from(hash, "hex"));
+  } catch {
+    return false;
+  }
+};
+
+const logSuperAdminAction = async (
+  action: string,
+  targetType: string | null,
+  targetId: string | null,
+  targetName: string | null,
+  details: string | null,
+) => {
+  if (!useSupabaseDb) return;
+  const client = supabaseAdmin || supabase;
+  if (!client) return;
+
+  try {
+    await client.from("superadmin_audit_logs").insert({
+      action,
+      target_type: targetType,
+      target_id: targetId,
+      target_name: targetName,
+      details,
+    });
+  } catch (e) {
+    console.error("Error registrando auditoría de SuperAdmin", e);
+  }
 };
 
 const getRequestSupabase = (req: express.Request) => {
@@ -525,7 +565,8 @@ const isBillingRoute = (path: string) => (
   matchesPath(path, '/dashboard/me') ||
   matchesPath(path, '/plans') ||
   matchesPath(path, '/payment-proof') ||
-  matchesPath(path, '/subscription-payments')
+  matchesPath(path, '/subscription-payments') ||
+  matchesPath(path, '/support-tickets')
 );
 
 const subscriptionGuard = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -599,18 +640,50 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     res.json({ authenticated: isSuperAdminRequest(req) });
   });
 
-  app.post("/api/superadmin/login", (req, res) => {
-    if (!superAdminEmail || !superAdminPassword || !superAdminSessionSecret) {
+  app.post("/api/superadmin/login", async (req, res) => {
+    if (!superAdminSessionSecret) {
       return res.status(503).json({ error: "SuperAdmin access is not configured" });
     }
 
     const { email, password } = req.body || {};
-    if (email !== superAdminEmail || password !== superAdminPassword) {
+    if (!email || !password) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    setSuperAdminCookie(res);
-    res.json({ authenticated: true });
+    // 1) Cuentas de administrador reales (tabla superadmin_users, permite varias personas)
+    if (useSupabaseDb) {
+      const client = supabaseAdmin || supabase;
+      if (client) {
+        const { data: adminRow } = await client
+          .from("superadmin_users")
+          .select("*")
+          .eq("email", email)
+          .eq("active", true)
+          .maybeSingle();
+
+        if (adminRow && verifyPassword(password, adminRow.password_hash, adminRow.password_salt)) {
+          setSuperAdminCookie(res);
+          await client.from("superadmin_users").update({ last_login_at: new Date().toISOString() }).eq("id", adminRow.id);
+          await logSuperAdminAction("LOGIN", null, null, email, "Inicio de sesión en el panel SuperAdmin");
+          return res.json({ authenticated: true });
+        }
+      }
+    }
+
+    // 2) Cuenta maestra por variables de entorno (compatibilidad con la configuración inicial)
+    if (superAdminEmail && superAdminPassword && email === superAdminEmail && password === superAdminPassword) {
+      setSuperAdminCookie(res);
+      await logSuperAdminAction("LOGIN", null, null, email, "Inicio de sesión (cuenta maestra) en el panel SuperAdmin");
+      return res.json({ authenticated: true });
+    }
+
+    res.status(401).json({ error: "Invalid credentials" });
+  });
+
+  app.post("/api/superadmin/logout", (_req, res) => {
+    clearSuperAdminCookie(res);
+    logSuperAdminAction("LOGOUT", null, null, null, "Cierre de sesión del panel SuperAdmin");
+    res.json({ authenticated: false });
   });
 
   // Registrar un comprobante de pago desde el Checkout del cliente
@@ -754,6 +827,14 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
 
     if (updateError) return res.status(500).json({ error: updateError.message });
 
+    await logSuperAdminAction(
+      "APROBAR_PAGO",
+      "subscription_payment",
+      req.params.id,
+      payment.business_name,
+      `Pago de S/ ${payment.amount} (${payment.plan}) aprobado. Suscripción activada hasta ${vencimiento.toISOString().split("T")[0]}.`,
+    );
+
     if (resend && payment.email) {
       try {
         await resend.emails.send({
@@ -783,12 +864,23 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     const client = supabaseAdmin || supabase;
     if (!client) return res.status(503).json({ error: "Supabase is not configured" });
 
-    const { error } = await client
+    const { data, error } = await client
       .from("subscription_payments")
       .update({ status: "Rechazado", reviewed_at: new Date().toISOString() })
-      .eq("id", req.params.id);
+      .eq("id", req.params.id)
+      .select("business_name, plan, amount")
+      .single();
 
     if (error) return res.status(500).json({ error: error.message });
+
+    await logSuperAdminAction(
+      "RECHAZAR_PAGO",
+      "subscription_payment",
+      req.params.id,
+      data?.business_name || null,
+      `Pago de S/ ${data?.amount ?? "-"} (${data?.plan || "-"}) rechazado.`,
+    );
+
     res.json({ success: true });
   });
 
@@ -813,11 +905,19 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
       .from("companies")
       .update({ subscription_status: "Activa", subscription_ends_at: nuevaFecha })
       .eq("id", req.params.id)
-      .select("id, subscription_status, subscription_ends_at")
+      .select("id, name, subscription_status, subscription_ends_at")
       .single();
 
     if (error) return res.status(500).json({ error: error.message });
     if (!data) return res.status(404).json({ error: "Empresa no encontrada" });
+
+    await logSuperAdminAction(
+      "RENOVAR_SUSCRIPCION",
+      "company",
+      data.id,
+      data.name,
+      `Suscripción renovada hasta ${nuevaFecha}.`,
+    );
 
     res.json({ id: data.id, estado: data.subscription_status, vencimiento: data.subscription_ends_at });
   });
@@ -876,6 +976,32 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
 
 
   // Métricas reales del Dashboard SuperAdmin
+  // Registro de auditoría de acciones del SuperAdmin
+  app.get("/api/superadmin/auditoria", requireSuperAdmin, async (_req, res) => {
+    if (!useSupabaseDb) return res.json({ data: [] });
+
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const { data, error } = await client
+      .from("superadmin_audit_logs")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(100);
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    const logs = (data || []).map((row: any) => ({
+      id: row.id,
+      accion: row.action,
+      objetivo: row.target_name || row.target_id || "-",
+      detalles: row.details || "",
+      fecha: row.created_at,
+    }));
+
+    res.json({ data: logs });
+  });
+
   app.get("/api/superadmin/dashboard", requireSuperAdmin, async (_req, res) => {
     if (!useSupabaseDb) {
       return res.json({
@@ -996,13 +1122,411 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
       .from("companies")
       .update({ subscription_status: estado })
       .eq("id", req.params.id)
-      .select("id, subscription_status")
+      .select("id, name, subscription_status")
       .single();
 
     if (error) return res.status(500).json({ error: error.message });
     if (!data) return res.status(404).json({ error: "Empresa no encontrada" });
 
+    await logSuperAdminAction(
+      estado === "Activa" ? "ACTIVAR_EMPRESA" : "SUSPENDER_EMPRESA",
+      "company",
+      data.id,
+      data.name,
+      `Estado cambiado a "${estado}".`,
+    );
+
     res.json({ id: data.id, estado: data.subscription_status });
+  });
+
+  // ==================== USUARIOS ADMINISTRADORES ====================
+  // Lista de cuentas que pueden acceder al panel SuperAdmin
+  app.get("/api/superadmin/usuarios", requireSuperAdmin, async (_req, res) => {
+    if (!useSupabaseDb) return res.json({ data: [] });
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const { data, error } = await client
+      .from("superadmin_users")
+      .select("id, email, active, created_at, last_login_at")
+      .order("created_at", { ascending: false });
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ data: data || [] });
+  });
+
+  app.post("/api/superadmin/usuarios", requireSuperAdmin, async (req, res) => {
+    const { email, password } = req.body || {};
+    if (!email || !password || password.length < 8) {
+      return res.status(400).json({ error: "Email y contraseña (mínimo 8 caracteres) son requeridos" });
+    }
+    if (!useSupabaseDb) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const { hash, salt } = hashPassword(password);
+    const { data, error } = await client
+      .from("superadmin_users")
+      .insert({ email, password_hash: hash, password_salt: salt })
+      .select("id, email, active, created_at")
+      .single();
+
+    if (error) {
+      const message = error.message.includes("duplicate") ? "Ya existe un administrador con ese correo" : error.message;
+      return res.status(400).json({ error: message });
+    }
+
+    await logSuperAdminAction("CREAR_ADMIN", "superadmin_user", data.id, email, "Nuevo administrador del panel creado.");
+    res.json(data);
+  });
+
+  app.put("/api/superadmin/usuarios/:id/estado", requireSuperAdmin, async (req, res) => {
+    const { active } = req.body || {};
+    if (typeof active !== "boolean") return res.status(400).json({ error: "'active' debe ser booleano" });
+    if (!useSupabaseDb) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const { data, error } = await client
+      .from("superadmin_users")
+      .update({ active })
+      .eq("id", req.params.id)
+      .select("id, email")
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    await logSuperAdminAction(
+      active ? "ACTIVAR_ADMIN" : "DESACTIVAR_ADMIN",
+      "superadmin_user",
+      data.id,
+      data.email,
+      active ? "Acceso reactivado." : "Acceso revocado.",
+    );
+
+    res.json({ success: true });
+  });
+
+  app.delete("/api/superadmin/usuarios/:id", requireSuperAdmin, async (req, res) => {
+    if (!useSupabaseDb) return res.status(503).json({ error: "Supabase is not configured" });
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const { data } = await client.from("superadmin_users").select("email").eq("id", req.params.id).maybeSingle();
+    const { error } = await client.from("superadmin_users").delete().eq("id", req.params.id);
+    if (error) return res.status(500).json({ error: error.message });
+
+    await logSuperAdminAction("ELIMINAR_ADMIN", "superadmin_user", req.params.id, data?.email || null, "Administrador eliminado.");
+    res.json({ success: true });
+  });
+
+  // ==================== PLANES ====================
+  app.get("/api/superadmin/planes", requireSuperAdmin, async (_req, res) => {
+    if (!useSupabaseDb) return res.json({ data: [] });
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const { data, error } = await client.from("plans").select("*").order("price", { ascending: true });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ data: data || [] });
+  });
+
+  app.post("/api/superadmin/planes", requireSuperAdmin, async (req, res) => {
+    const { name, price, description, features } = req.body || {};
+    if (!name) return res.status(400).json({ error: "El nombre del plan es requerido" });
+    if (!useSupabaseDb) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const { data, error } = await client
+      .from("plans")
+      .insert({ name, price: Number(price) || 0, description: description || null, features: features || [] })
+      .select("*")
+      .single();
+
+    if (error) {
+      const message = error.message.includes("duplicate") ? "Ya existe un plan con ese nombre" : error.message;
+      return res.status(400).json({ error: message });
+    }
+
+    await logSuperAdminAction("CREAR_PLAN", "plan", data.id, data.name, `Plan creado a S/ ${data.price}.`);
+    res.json(data);
+  });
+
+  app.put("/api/superadmin/planes/:id", requireSuperAdmin, async (req, res) => {
+    const { name, price, description, features, active } = req.body || {};
+    if (!useSupabaseDb) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const updatePayload: Record<string, any> = {};
+    if (name !== undefined) updatePayload.name = name;
+    if (price !== undefined) updatePayload.price = Number(price) || 0;
+    if (description !== undefined) updatePayload.description = description;
+    if (features !== undefined) updatePayload.features = features;
+    if (active !== undefined) updatePayload.active = active;
+
+    const { data, error } = await client
+      .from("plans")
+      .update(updatePayload)
+      .eq("id", req.params.id)
+      .select("*")
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    await logSuperAdminAction("ACTUALIZAR_PLAN", "plan", data.id, data.name, "Plan actualizado.");
+    res.json(data);
+  });
+
+  app.delete("/api/superadmin/planes/:id", requireSuperAdmin, async (req, res) => {
+    if (!useSupabaseDb) return res.status(503).json({ error: "Supabase is not configured" });
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const { data } = await client.from("plans").select("name").eq("id", req.params.id).maybeSingle();
+    const { error } = await client.from("plans").delete().eq("id", req.params.id);
+    if (error) return res.status(500).json({ error: error.message });
+
+    await logSuperAdminAction("ELIMINAR_PLAN", "plan", req.params.id, data?.name || null, "Plan eliminado.");
+    res.json({ success: true });
+  });
+
+  // ==================== PROMOCIONES ====================
+  app.get("/api/superadmin/promociones", requireSuperAdmin, async (_req, res) => {
+    if (!useSupabaseDb) return res.json({ data: [] });
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const { data, error } = await client.from("promotions").select("*").order("created_at", { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ data: data || [] });
+  });
+
+  app.post("/api/superadmin/promociones", requireSuperAdmin, async (req, res) => {
+    const { code, discountType, discountValue, expiresAt } = req.body || {};
+    if (!code || !discountValue) return res.status(400).json({ error: "Código y valor de descuento son requeridos" });
+    if (!useSupabaseDb) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const { data, error } = await client
+      .from("promotions")
+      .insert({
+        code: code.toUpperCase(),
+        discount_type: discountType === "fixed" ? "fixed" : "percentage",
+        discount_value: Number(discountValue) || 0,
+        expires_at: expiresAt || null,
+      })
+      .select("*")
+      .single();
+
+    if (error) {
+      const message = error.message.includes("duplicate") ? "Ya existe una promoción con ese código" : error.message;
+      return res.status(400).json({ error: message });
+    }
+
+    await logSuperAdminAction("CREAR_PROMOCION", "promotion", data.id, data.code, `Descuento de ${data.discount_value}${data.discount_type === "percentage" ? "%" : " soles"} creado.`);
+    res.json(data);
+  });
+
+  app.put("/api/superadmin/promociones/:id/estado", requireSuperAdmin, async (req, res) => {
+    const { active } = req.body || {};
+    if (typeof active !== "boolean") return res.status(400).json({ error: "'active' debe ser booleano" });
+    if (!useSupabaseDb) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const { data, error } = await client
+      .from("promotions")
+      .update({ active })
+      .eq("id", req.params.id)
+      .select("code")
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    await logSuperAdminAction(active ? "ACTIVAR_PROMOCION" : "DESACTIVAR_PROMOCION", "promotion", req.params.id, data.code, null);
+    res.json({ success: true });
+  });
+
+  app.delete("/api/superadmin/promociones/:id", requireSuperAdmin, async (req, res) => {
+    if (!useSupabaseDb) return res.status(503).json({ error: "Supabase is not configured" });
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const { data } = await client.from("promotions").select("code").eq("id", req.params.id).maybeSingle();
+    const { error } = await client.from("promotions").delete().eq("id", req.params.id);
+    if (error) return res.status(500).json({ error: error.message });
+
+    await logSuperAdminAction("ELIMINAR_PROMOCION", "promotion", req.params.id, data?.code || null, null);
+    res.json({ success: true });
+  });
+
+  // ==================== SOPORTE ====================
+  // Endpoint público (requiere sesión de cliente) para crear un ticket desde el dashboard del negocio
+  app.post("/api/support-tickets", async (req, res) => {
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ error: "Unauthorized" });
+
+    const { subject, message, businessName } = req.body || {};
+    if (!subject || !message) return res.status(400).json({ error: "subject y message son requeridos" });
+    if (!useSupabaseDb) return res.json({ id: Date.now().toString() });
+
+    const client = supabaseAdmin || getRequestSupabase(req);
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const { data: companyRow } = await client
+      .from("companies")
+      .select("id")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const { data, error } = await client
+      .from("support_tickets")
+      .insert({
+        user_id: user.id,
+        company_id: companyRow?.id || null,
+        business_name: businessName || null,
+        email: user.email || null,
+        subject,
+        message,
+      })
+      .select("*")
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  });
+
+  app.get("/api/superadmin/soporte", requireSuperAdmin, async (_req, res) => {
+    if (!useSupabaseDb) return res.json({ data: [] });
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const { data, error } = await client
+      .from("support_tickets")
+      .select("*")
+      .neq("status", "Cerrado")
+      .order("created_at", { ascending: false });
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ data: data || [] });
+  });
+
+  app.post("/api/superadmin/soporte/:id/responder", requireSuperAdmin, async (req, res) => {
+    const { reply } = req.body || {};
+    if (!reply) return res.status(400).json({ error: "La respuesta no puede estar vacía" });
+    if (!useSupabaseDb) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const { data, error } = await client
+      .from("support_tickets")
+      .update({ reply, status: "Resuelto", resolved_at: new Date().toISOString() })
+      .eq("id", req.params.id)
+      .select("subject, business_name")
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    await logSuperAdminAction("RESPONDER_TICKET", "support_ticket", req.params.id, data?.business_name || data?.subject, "Ticket respondido y marcado como resuelto.");
+    res.json({ success: true });
+  });
+
+  app.put("/api/superadmin/soporte/:id/cerrar", requireSuperAdmin, async (req, res) => {
+    if (!useSupabaseDb) return res.status(503).json({ error: "Supabase is not configured" });
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const { error } = await client.from("support_tickets").update({ status: "Cerrado" }).eq("id", req.params.id);
+    if (error) return res.status(500).json({ error: error.message });
+
+    await logSuperAdminAction("CERRAR_TICKET", "support_ticket", req.params.id, null, null);
+    res.json({ success: true });
+  });
+
+  // ==================== REPORTES ====================
+  app.get("/api/superadmin/reportes", requireSuperAdmin, async (_req, res) => {
+    if (!useSupabaseDb) return res.json({ data: { ingresosPorDia: [], empresasPorPlan: [], pagosPorEstado: [] } });
+
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const desde = new Date();
+    desde.setDate(desde.getDate() - 30);
+
+    const [companiesResult, paymentsResult] = await Promise.all([
+      client.from("companies").select("plan"),
+      client.from("subscription_payments").select("amount, status, created_at").gte("created_at", desde.toISOString()),
+    ]);
+
+    if (companiesResult.error) return res.status(500).json({ error: companiesResult.error.message });
+    if (paymentsResult.error) return res.status(500).json({ error: paymentsResult.error.message });
+
+    const empresasPorPlanMap: Record<string, number> = {};
+    (companiesResult.data || []).forEach((c: any) => {
+      const plan = c.plan || "Sin plan";
+      empresasPorPlanMap[plan] = (empresasPorPlanMap[plan] || 0) + 1;
+    });
+
+    const pagosPorEstadoMap: Record<string, number> = { Pendiente: 0, Aprobado: 0, Rechazado: 0 };
+    const ingresosPorDiaMap: Record<string, number> = {};
+    (paymentsResult.data || []).forEach((p: any) => {
+      pagosPorEstadoMap[p.status] = (pagosPorEstadoMap[p.status] || 0) + 1;
+      if (p.status === "Aprobado") {
+        const day = p.created_at.split("T")[0];
+        ingresosPorDiaMap[day] = (ingresosPorDiaMap[day] || 0) + Number(p.amount || 0);
+      }
+    });
+
+    res.json({
+      data: {
+        ingresosPorDia: Object.entries(ingresosPorDiaMap).map(([fecha, total]) => ({ fecha, total })).sort((a, b) => a.fecha.localeCompare(b.fecha)),
+        empresasPorPlan: Object.entries(empresasPorPlanMap).map(([plan, total]) => ({ plan, total })),
+        pagosPorEstado: Object.entries(pagosPorEstadoMap).map(([estado, total]) => ({ estado, total })),
+      },
+    });
+  });
+
+  // ==================== CRM COMERCIAL (leads en prueba gratuita) ====================
+  app.get("/api/superadmin/crm-leads", requireSuperAdmin, async (_req, res) => {
+    if (!useSupabaseDb) return res.json({ data: [] });
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const { data, error } = await client
+      .from("companies")
+      .select("id, name, plan, subscription_status, subscription_ends_at, created_at")
+      .eq("subscription_status", "Prueba Gratuita")
+      .order("subscription_ends_at", { ascending: true });
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    const hoy = new Date();
+    const leads = (data || []).map((c: any) => {
+      const vencimiento = c.subscription_ends_at ? new Date(c.subscription_ends_at) : null;
+      const diasRestantes = vencimiento ? Math.ceil((vencimiento.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24)) : null;
+      return {
+        id: c.id,
+        empresa: c.name,
+        plan: c.plan,
+        vencimiento: c.subscription_ends_at,
+        diasRestantes,
+        registro: c.created_at ? c.created_at.split("T")[0] : "",
+      };
+    });
+
+    res.json({ data: leads });
   });
 
   app.get("/api/companies", (req, res) => {
