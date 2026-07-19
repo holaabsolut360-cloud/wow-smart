@@ -80,7 +80,7 @@ export default function Auth() {
 
         <div className="relative z-10">
           <Link to="/" className="flex items-center gap-2 mb-12 w-fit">
-            <Logo size="lg" />
+            <img src="/icon.png" alt="WowSmart" className="h-14 w-auto object-contain" />
           </Link>
           
           <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight leading-tight mb-6">
