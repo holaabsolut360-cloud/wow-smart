@@ -1,6 +1,7 @@
 import { motion } from "motion/react";
 import { Link } from "react-router-dom";
 import { CheckCircle, LayoutDashboard, ShoppingBag, Zap, ShoppingCart, ChevronDown, Phone, Mail, MapPin } from "lucide-react";
+import Logo from '../components/Logo';
 
 export default function Landing() {
   return (
@@ -8,7 +9,7 @@ export default function Landing() {
       {/* Navbar */}
       <nav className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-6 md:px-10 flex-shrink-0">
         <div className="flex items-center gap-2">
-          <img src="/logo.png" alt="WowSmart" className="h-10 object-contain" />
+          <Logo size="md" />
         </div>
         <div className="flex items-center gap-8 text-sm font-medium text-slate-600">
           <Link to="/auth" className="hidden md:block hover:text-indigo-600 transition-colors">Iniciar Sesión</Link>
