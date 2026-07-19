@@ -1,22 +1,82 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
+import Logo from '../components/Logo';
+
+interface ComplaintFormData {
+  nombres: string;
+  apellidos: string;
+  tipoDocumento: string;
+  numeroDocumento: string;
+  email: string;
+  telefono: string;
+  tipo: 'Reclamo' | 'Queja';
+  detalle: string;
+  pedido: string;
+}
+
+const INITIAL_FORM_DATA: ComplaintFormData = {
+  nombres: '',
+  apellidos: '',
+  tipoDocumento: 'DNI',
+  numeroDocumento: '',
+  email: '',
+  telefono: '',
+  tipo: 'Reclamo',
+  detalle: '',
+  pedido: '',
+};
 
 export default function ComplaintsBook() {
   const [submitted, setSubmitted] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [formData, setFormData] = useState<ComplaintFormData>(INITIAL_FORM_DATA);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Simulate submission
-    setTimeout(() => {
+    if (isLoading) return; // evita doble clic mientras se procesa
+
+    setIsLoading(true);
+    try {
+      const res = await fetch('/api/complaints', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nombres: formData.nombres,
+          apellidos: formData.apellidos,
+          tipoDocumento: formData.tipoDocumento,
+          numeroDocumento: formData.numeroDocumento,
+          email: formData.email,
+          telefono: formData.telefono,
+          tipo: formData.tipo,
+          detalle: formData.detalle,
+          pedido: formData.pedido,
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || 'No se pudo registrar el reclamo');
+      }
+
       setSubmitted(true);
-    }, 1000);
+      setFormData(INITIAL_FORM_DATA);
+    } catch (err: any) {
+      alert(err.message || 'Hubo un problema al enviar tu reclamo. Por favor, verifica tu conexión e inténtalo nuevamente.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex flex-col">
       <nav className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-6 md:px-10 flex-shrink-0">
         <Link to="/" className="flex items-center gap-2">
-          <img src="/logo.png" alt="WowSmart" className="h-10 object-contain" />
+          <Logo size="md" />
         </Link>
         <div className="flex items-center gap-8 text-sm font-medium text-slate-600">
           <Link to="/" className="hover:text-indigo-600 transition-colors">Volver al inicio</Link>
@@ -45,37 +105,37 @@ export default function ComplaintsBook() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">Nombres</label>
-                <input required type="text" className="w-full border border-slate-300 rounded-xl px-4 py-2.5 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all" />
+                <input required type="text" name="nombres" value={formData.nombres} onChange={handleInputChange} className="w-full border border-slate-300 rounded-xl px-4 py-2.5 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all" />
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">Apellidos</label>
-                <input required type="text" className="w-full border border-slate-300 rounded-xl px-4 py-2.5 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all" />
+                <input required type="text" name="apellidos" value={formData.apellidos} onChange={handleInputChange} className="w-full border border-slate-300 rounded-xl px-4 py-2.5 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all" />
               </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">Tipo de Documento</label>
-                <select className="w-full border border-slate-300 rounded-xl px-4 py-2.5 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all">
-                  <option>DNI</option>
-                  <option>CE</option>
-                  <option>Pasaporte</option>
+                <select name="tipoDocumento" value={formData.tipoDocumento} onChange={handleInputChange} className="w-full border border-slate-300 rounded-xl px-4 py-2.5 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all">
+                  <option value="DNI">DNI</option>
+                  <option value="CE">CE</option>
+                  <option value="Pasaporte">Pasaporte</option>
                 </select>
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">Número de Documento</label>
-                <input required type="text" className="w-full border border-slate-300 rounded-xl px-4 py-2.5 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all" />
+                <input required type="text" name="numeroDocumento" value={formData.numeroDocumento} onChange={handleInputChange} className="w-full border border-slate-300 rounded-xl px-4 py-2.5 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all" />
               </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">Correo Electrónico</label>
-                <input required type="email" className="w-full border border-slate-300 rounded-xl px-4 py-2.5 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all" />
+                <input required type="email" name="email" value={formData.email} onChange={handleInputChange} className="w-full border border-slate-300 rounded-xl px-4 py-2.5 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all" />
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">Teléfono</label>
-                <input required type="tel" className="w-full border border-slate-300 rounded-xl px-4 py-2.5 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all" />
+                <input required type="tel" name="telefono" value={formData.telefono} onChange={handleInputChange} className="w-full border border-slate-300 rounded-xl px-4 py-2.5 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all" />
               </div>
             </div>
 
@@ -83,11 +143,11 @@ export default function ComplaintsBook() {
               <label className="block text-sm font-medium text-slate-700 mb-2">Tipo</label>
               <div className="flex gap-4">
                 <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="radio" name="tipo" defaultChecked className="text-indigo-600 focus:ring-indigo-500" />
+                  <input type="radio" name="tipo" value="Reclamo" checked={formData.tipo === 'Reclamo'} onChange={handleInputChange} className="text-indigo-600 focus:ring-indigo-500" />
                   <span className="text-sm text-slate-600">Reclamo</span>
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="radio" name="tipo" className="text-indigo-600 focus:ring-indigo-500" />
+                  <input type="radio" name="tipo" value="Queja" checked={formData.tipo === 'Queja'} onChange={handleInputChange} className="text-indigo-600 focus:ring-indigo-500" />
                   <span className="text-sm text-slate-600">Queja</span>
                 </label>
               </div>
@@ -99,16 +159,27 @@ export default function ComplaintsBook() {
 
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">Detalle del Reclamo / Queja</label>
-              <textarea required rows={5} className="w-full border border-slate-300 rounded-xl px-4 py-3 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all resize-none"></textarea>
+              <textarea required rows={5} name="detalle" value={formData.detalle} onChange={handleInputChange} className="w-full border border-slate-300 rounded-xl px-4 py-3 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all resize-none"></textarea>
             </div>
 
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">Pedido (Lo que solicita)</label>
-              <textarea required rows={3} className="w-full border border-slate-300 rounded-xl px-4 py-3 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all resize-none"></textarea>
+              <textarea required rows={3} name="pedido" value={formData.pedido} onChange={handleInputChange} className="w-full border border-slate-300 rounded-xl px-4 py-3 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all resize-none"></textarea>
             </div>
 
-            <button type="submit" className="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl hover:bg-indigo-700 transition-colors">
-              Enviar Reclamo
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl hover:bg-indigo-700 transition-colors disabled:opacity-70 flex items-center justify-center gap-2"
+            >
+              {isLoading ? (
+                <>
+                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                  Enviando...
+                </>
+              ) : (
+                'Enviar Reclamo'
+              )}
             </button>
           </form>
         )}
