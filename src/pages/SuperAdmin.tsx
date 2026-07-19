@@ -133,11 +133,346 @@ export default function SuperAdmin() {
     }
   };
 
+  const [auditLogsSA, setAuditLogsSA] = useState<any[]>([]);
+  const [planes, setPlanes] = useState<any[]>([]);
+  const [planesLoading, setPlanesLoading] = useState(false);
+  const [planesError, setPlanesError] = useState('');
+  const [nuevoPlan, setNuevoPlan] = useState({ name: '', price: '', description: '' });
+  const [nuevaFeature, setNuevaFeature] = useState<Record<string, string>>({});
+
+  const [promociones, setPromociones] = useState<any[]>([]);
+  const [promocionesLoading, setPromocionesLoading] = useState(false);
+  const [promocionesError, setPromocionesError] = useState('');
+  const [nuevaPromo, setNuevaPromo] = useState({ code: '', discountType: 'percentage', discountValue: '', expiresAt: '' });
+
+  const [adminUsers, setAdminUsers] = useState<any[]>([]);
+  const [adminUsersLoading, setAdminUsersLoading] = useState(false);
+  const [adminUsersError, setAdminUsersError] = useState('');
+  const [nuevoAdmin, setNuevoAdmin] = useState({ email: '', password: '' });
+
+  const [tickets, setTickets] = useState<any[]>([]);
+  const [ticketsLoading, setTicketsLoading] = useState(false);
+  const [ticketsError, setTicketsError] = useState('');
+  const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
+
+  const [reportes, setReportes] = useState<any>(null);
+  const [reportesLoading, setReportesLoading] = useState(false);
+  const [reportesError, setReportesError] = useState('');
+
+  const [crmLeads, setCrmLeads] = useState<any[]>([]);
+  const [crmLoading, setCrmLoading] = useState(false);
+  const [crmError, setCrmError] = useState('');
+  const [auditoriaLoading, setAuditoriaLoading] = useState(false);
+  const [auditoriaError, setAuditoriaError] = useState('');
+
+  const fetchAuditoria = async () => {
+    setAuditoriaLoading(true);
+    setAuditoriaError('');
+    try {
+      const res = await fetch('/api/superadmin/auditoria');
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || 'No se pudo cargar la auditoría');
+      }
+      const { data } = await res.json();
+      setAuditLogsSA(data || []);
+    } catch (err: any) {
+      setAuditoriaError(err.message || 'Error al cargar la auditoría');
+    } finally {
+      setAuditoriaLoading(false);
+    }
+  };
+
+  const fetchPlanes = async () => {
+    setPlanesLoading(true);
+    setPlanesError('');
+    try {
+      const res = await fetch('/api/superadmin/planes');
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || 'No se pudieron cargar los planes');
+      const { data } = await res.json();
+      setPlanes(data || []);
+    } catch (err: any) {
+      setPlanesError(err.message || 'Error al cargar planes');
+    } finally {
+      setPlanesLoading(false);
+    }
+  };
+
+  const fetchPromociones = async () => {
+    setPromocionesLoading(true);
+    setPromocionesError('');
+    try {
+      const res = await fetch('/api/superadmin/promociones');
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || 'No se pudieron cargar las promociones');
+      const { data } = await res.json();
+      setPromociones(data || []);
+    } catch (err: any) {
+      setPromocionesError(err.message || 'Error al cargar promociones');
+    } finally {
+      setPromocionesLoading(false);
+    }
+  };
+
+  const fetchAdminUsers = async () => {
+    setAdminUsersLoading(true);
+    setAdminUsersError('');
+    try {
+      const res = await fetch('/api/superadmin/usuarios');
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || 'No se pudieron cargar los administradores');
+      const { data } = await res.json();
+      setAdminUsers(data || []);
+    } catch (err: any) {
+      setAdminUsersError(err.message || 'Error al cargar administradores');
+    } finally {
+      setAdminUsersLoading(false);
+    }
+  };
+
+  const fetchTickets = async () => {
+    setTicketsLoading(true);
+    setTicketsError('');
+    try {
+      const res = await fetch('/api/superadmin/soporte');
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || 'No se pudieron cargar los tickets');
+      const { data } = await res.json();
+      setTickets(data || []);
+    } catch (err: any) {
+      setTicketsError(err.message || 'Error al cargar tickets');
+    } finally {
+      setTicketsLoading(false);
+    }
+  };
+
+  const fetchReportes = async () => {
+    setReportesLoading(true);
+    setReportesError('');
+    try {
+      const res = await fetch('/api/superadmin/reportes');
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || 'No se pudieron cargar los reportes');
+      const { data } = await res.json();
+      setReportes(data);
+    } catch (err: any) {
+      setReportesError(err.message || 'Error al cargar reportes');
+    } finally {
+      setReportesLoading(false);
+    }
+  };
+
+  const fetchCrmLeads = async () => {
+    setCrmLoading(true);
+    setCrmError('');
+    try {
+      const res = await fetch('/api/superadmin/crm-leads');
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || 'No se pudieron cargar los leads');
+      const { data } = await res.json();
+      setCrmLeads(data || []);
+    } catch (err: any) {
+      setCrmError(err.message || 'Error al cargar CRM');
+    } finally {
+      setCrmLoading(false);
+    }
+  };
+
+  // --- Acciones: Planes ---
+  const handleCrearPlan = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('/api/superadmin/planes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: nuevoPlan.name, price: nuevoPlan.price, description: nuevoPlan.description, features: [] }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || 'No se pudo crear el plan');
+      setNuevoPlan({ name: '', price: '', description: '' });
+      await Promise.all([fetchPlanes(), fetchAuditoria()]);
+    } catch (err: any) {
+      alert(err.message || 'Error al crear el plan');
+    }
+  };
+
+  const handleTogglePlanActivo = async (id: string, active: boolean) => {
+    try {
+      const res = await fetch(`/api/superadmin/planes/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || 'No se pudo actualizar el plan');
+      await Promise.all([fetchPlanes(), fetchAuditoria()]);
+    } catch (err: any) {
+      alert(err.message || 'Error al actualizar el plan');
+    }
+  };
+
+  const handleEliminarPlan = async (id: string) => {
+    if (!confirm('¿Eliminar este plan? Esta acción no se puede deshacer.')) return;
+    try {
+      const res = await fetch(`/api/superadmin/planes/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || 'No se pudo eliminar el plan');
+      await Promise.all([fetchPlanes(), fetchAuditoria()]);
+    } catch (err: any) {
+      alert(err.message || 'Error al eliminar el plan');
+    }
+  };
+
+  // --- Acciones: Funcionalidades (features por plan) ---
+  const handleAgregarFeature = async (plan: any) => {
+    const nueva = (nuevaFeature[plan.id] || '').trim();
+    if (!nueva) return;
+    const features = [...(plan.features || []), nueva];
+    try {
+      const res = await fetch(`/api/superadmin/planes/${plan.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ features }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || 'No se pudo agregar la funcionalidad');
+      setNuevaFeature(prev => ({ ...prev, [plan.id]: '' }));
+      await fetchPlanes();
+    } catch (err: any) {
+      alert(err.message || 'Error al agregar la funcionalidad');
+    }
+  };
+
+  const handleQuitarFeature = async (plan: any, feature: string) => {
+    const features = (plan.features || []).filter((f: string) => f !== feature);
+    try {
+      const res = await fetch(`/api/superadmin/planes/${plan.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ features }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || 'No se pudo quitar la funcionalidad');
+      await fetchPlanes();
+    } catch (err: any) {
+      alert(err.message || 'Error al quitar la funcionalidad');
+    }
+  };
+
+  // --- Acciones: Promociones ---
+  const handleCrearPromo = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('/api/superadmin/promociones', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(nuevaPromo),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || 'No se pudo crear la promoción');
+      setNuevaPromo({ code: '', discountType: 'percentage', discountValue: '', expiresAt: '' });
+      await Promise.all([fetchPromociones(), fetchAuditoria()]);
+    } catch (err: any) {
+      alert(err.message || 'Error al crear la promoción');
+    }
+  };
+
+  const handleTogglePromo = async (id: string, active: boolean) => {
+    try {
+      const res = await fetch(`/api/superadmin/promociones/${id}/estado`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || 'No se pudo actualizar la promoción');
+      await Promise.all([fetchPromociones(), fetchAuditoria()]);
+    } catch (err: any) {
+      alert(err.message || 'Error al actualizar la promoción');
+    }
+  };
+
+  const handleEliminarPromo = async (id: string) => {
+    if (!confirm('¿Eliminar esta promoción?')) return;
+    try {
+      const res = await fetch(`/api/superadmin/promociones/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || 'No se pudo eliminar la promoción');
+      await Promise.all([fetchPromociones(), fetchAuditoria()]);
+    } catch (err: any) {
+      alert(err.message || 'Error al eliminar la promoción');
+    }
+  };
+
+  // --- Acciones: Usuarios Administradores ---
+  const handleCrearAdmin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('/api/superadmin/usuarios', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(nuevoAdmin),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || 'No se pudo crear el administrador');
+      setNuevoAdmin({ email: '', password: '' });
+      await Promise.all([fetchAdminUsers(), fetchAuditoria()]);
+    } catch (err: any) {
+      alert(err.message || 'Error al crear el administrador');
+    }
+  };
+
+  const handleToggleAdmin = async (id: string, active: boolean) => {
+    try {
+      const res = await fetch(`/api/superadmin/usuarios/${id}/estado`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || 'No se pudo actualizar el administrador');
+      await Promise.all([fetchAdminUsers(), fetchAuditoria()]);
+    } catch (err: any) {
+      alert(err.message || 'Error al actualizar el administrador');
+    }
+  };
+
+  const handleEliminarAdmin = async (id: string) => {
+    if (!confirm('¿Eliminar el acceso de este administrador?')) return;
+    try {
+      const res = await fetch(`/api/superadmin/usuarios/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || 'No se pudo eliminar el administrador');
+      await Promise.all([fetchAdminUsers(), fetchAuditoria()]);
+    } catch (err: any) {
+      alert(err.message || 'Error al eliminar el administrador');
+    }
+  };
+
+  // --- Acciones: Soporte ---
+  const handleResponderTicket = async (id: string) => {
+    const reply = (replyDrafts[id] || '').trim();
+    if (!reply) { alert('Escribe una respuesta antes de enviar.'); return; }
+    try {
+      const res = await fetch(`/api/superadmin/soporte/${id}/responder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reply }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || 'No se pudo responder el ticket');
+      setReplyDrafts(prev => ({ ...prev, [id]: '' }));
+      await Promise.all([fetchTickets(), fetchAuditoria()]);
+    } catch (err: any) {
+      alert(err.message || 'Error al responder el ticket');
+    }
+  };
+
+  const handleCerrarTicket = async (id: string) => {
+    try {
+      const res = await fetch(`/api/superadmin/soporte/${id}/cerrar`, { method: 'PUT' });
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || 'No se pudo cerrar el ticket');
+      await Promise.all([fetchTickets(), fetchAuditoria()]);
+    } catch (err: any) {
+      alert(err.message || 'Error al cerrar el ticket');
+    }
+  };
+
   useEffect(() => {
     if (isAuthenticated) {
       fetchPagosPendientes();
       fetchSuscripciones();
       fetchDashboard();
+      fetchAuditoria();
+      fetchPlanes();
+      fetchPromociones();
+      fetchAdminUsers();
+      fetchTickets();
+      fetchReportes();
+      fetchCrmLeads();
     }
   }, [isAuthenticated]);
 
@@ -172,7 +507,7 @@ export default function SuperAdmin() {
         const data = await res.json().catch(() => null);
         throw new Error(data?.error || 'No se pudo aprobar el pago');
       }
-      await Promise.all([fetchPagosPendientes(), fetchSuscripciones(), fetchEmpresas(), fetchDashboard()]);
+      await Promise.all([fetchPagosPendientes(), fetchSuscripciones(), fetchEmpresas(), fetchDashboard(), fetchAuditoria()]);
       alert('Pago aprobado. La suscripción se ha activado y se ha enviado el comprobante por correo.');
     } catch (err: any) {
       alert(err.message || 'Error al aprobar el pago');
@@ -207,6 +542,7 @@ export default function SuperAdmin() {
         const data = await res.json().catch(() => null);
         throw new Error(data?.error || 'No se pudo actualizar el estado');
       }
+      fetchAuditoria();
     } catch (err: any) {
       setEmpresas(previous); // revertir si falla
       alert(err.message || 'Error al actualizar el estado de la empresa');
@@ -223,7 +559,7 @@ export default function SuperAdmin() {
         const data = await res.json().catch(() => null);
         throw new Error(data?.error || 'No se pudo renovar la suscripción');
       }
-      await Promise.all([fetchSuscripciones(), fetchEmpresas(), fetchDashboard()]);
+      await Promise.all([fetchSuscripciones(), fetchEmpresas(), fetchDashboard(), fetchAuditoria()]);
       alert('Suscripción renovada por 30 días.');
     } catch (err: any) {
       alert(err.message || 'Error al renovar la suscripción');
@@ -713,7 +1049,379 @@ export default function SuperAdmin() {
             </div>
           )}
 
-          {activeTab !== 'dashboard' && activeTab !== 'pagos' && activeTab !== 'empresas' && activeTab !== 'suscripciones' && activeTab !== 'configuracion' && (
+          {activeTab === 'auditoria' && (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="p-6 border-b border-slate-200">
+                <h2 className="text-lg font-bold text-slate-800">Auditoría del Panel SuperAdmin</h2>
+                <p className="text-slate-500 text-sm">Registro de las últimas 100 acciones realizadas.</p>
+              </div>
+              {auditoriaError && (
+                <div className="mx-6 mt-4 p-3 rounded-lg bg-rose-50 text-rose-700 text-sm">{auditoriaError}</div>
+              )}
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
+                      <th className="p-4 font-bold border-b border-slate-200">Fecha</th>
+                      <th className="p-4 font-bold border-b border-slate-200">Acción</th>
+                      <th className="p-4 font-bold border-b border-slate-200">Objetivo</th>
+                      <th className="p-4 font-bold border-b border-slate-200">Detalles</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-sm">
+                    {auditoriaLoading && (
+                      <tr><td colSpan={4} className="p-6 text-center text-slate-400">Cargando auditoría...</td></tr>
+                    )}
+                    {!auditoriaLoading && auditLogsSA.length === 0 && !auditoriaError && (
+                      <tr><td colSpan={4} className="p-6 text-center text-slate-400">Aún no hay acciones registradas.</td></tr>
+                    )}
+                    {auditLogsSA.map(log => (
+                      <tr key={log.id} className="border-b border-slate-100 hover:bg-slate-50">
+                        <td className="p-4 text-slate-500 whitespace-nowrap">{new Date(log.fecha).toLocaleString('es-PE')}</td>
+                        <td className="p-4">
+                          <span className="bg-indigo-50 text-indigo-700 px-2 py-1 rounded font-bold text-xs">{log.accion}</span>
+                        </td>
+                        <td className="p-4 font-medium text-slate-800">{log.objetivo}</td>
+                        <td className="p-4 text-slate-600">{log.detalles}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'planes' && (
+            <div className="space-y-6">
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+                <h2 className="text-lg font-bold text-slate-800 mb-4">Nuevo Plan</h2>
+                <form onSubmit={handleCrearPlan} className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                  <input required placeholder="Nombre" value={nuevoPlan.name} onChange={e => setNuevoPlan({ ...nuevoPlan, name: e.target.value })} className="px-4 py-2 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500" />
+                  <input required type="number" placeholder="Precio (S/)" value={nuevoPlan.price} onChange={e => setNuevoPlan({ ...nuevoPlan, price: e.target.value })} className="px-4 py-2 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500" />
+                  <input placeholder="Descripción" value={nuevoPlan.description} onChange={e => setNuevoPlan({ ...nuevoPlan, description: e.target.value })} className="px-4 py-2 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500" />
+                  <button type="submit" className="bg-indigo-600 text-white rounded-lg font-bold px-4 py-2 hover:bg-indigo-700">Crear Plan</button>
+                </form>
+              </div>
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                {planesError && <div className="m-6 p-3 rounded-lg bg-rose-50 text-rose-700 text-sm">{planesError}</div>}
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
+                      <th className="p-4 font-bold border-b border-slate-200">Plan</th>
+                      <th className="p-4 font-bold border-b border-slate-200">Precio</th>
+                      <th className="p-4 font-bold border-b border-slate-200">Descripción</th>
+                      <th className="p-4 font-bold border-b border-slate-200">Estado</th>
+                      <th className="p-4 font-bold border-b border-slate-200 text-right">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-sm">
+                    {planesLoading && <tr><td colSpan={5} className="p-6 text-center text-slate-400">Cargando planes...</td></tr>}
+                    {!planesLoading && planes.length === 0 && <tr><td colSpan={5} className="p-6 text-center text-slate-400">Aún no hay planes creados.</td></tr>}
+                    {planes.map(plan => (
+                      <tr key={plan.id} className="border-b border-slate-100 hover:bg-slate-50">
+                        <td className="p-4 font-bold text-slate-800">{plan.name}</td>
+                        <td className="p-4 text-slate-600">S/ {plan.price}</td>
+                        <td className="p-4 text-slate-500">{plan.description || '-'}</td>
+                        <td className="p-4">
+                          <span className={`px-2 py-1 rounded font-medium text-xs ${plan.active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                            {plan.active ? 'Activo' : 'Inactivo'}
+                          </span>
+                        </td>
+                        <td className="p-4 flex gap-2 justify-end">
+                          <button onClick={() => handleTogglePlanActivo(plan.id, !plan.active)} className="text-slate-600 hover:text-indigo-600 font-medium text-sm border border-slate-200 px-3 py-1 rounded-lg">
+                            {plan.active ? 'Desactivar' : 'Activar'}
+                          </button>
+                          <button onClick={() => handleEliminarPlan(plan.id)} className="text-rose-600 hover:text-rose-800 font-medium text-sm bg-rose-50 px-3 py-1 rounded-lg">Eliminar</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'funcionalidades' && (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+              <h2 className="text-lg font-bold text-slate-800 mb-1">Funcionalidades por Plan</h2>
+              <p className="text-slate-500 text-sm mb-6">Agrega o quita las funcionalidades incluidas en cada plan.</p>
+              {planesLoading && <p className="text-slate-400 text-sm">Cargando planes...</p>}
+              {!planesLoading && planes.length === 0 && <p className="text-slate-400 text-sm">Crea primero un plan en la pestaña "Planes".</p>}
+              <div className="space-y-6">
+                {planes.map(plan => (
+                  <div key={plan.id} className="border border-slate-200 rounded-xl p-4">
+                    <div className="font-bold text-slate-800 mb-3">{plan.name}</div>
+                    <div className="flex flex-wrap gap-2 mb-3">
+                      {(plan.features || []).map((f: string) => (
+                        <span key={f} className="bg-indigo-50 text-indigo-700 text-xs font-medium px-3 py-1.5 rounded-full flex items-center gap-2">
+                          {f}
+                          <button onClick={() => handleQuitarFeature(plan, f)} className="text-indigo-400 hover:text-indigo-700 font-bold">×</button>
+                        </span>
+                      ))}
+                      {(plan.features || []).length === 0 && <span className="text-slate-400 text-sm">Sin funcionalidades asignadas.</span>}
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        placeholder="Nueva funcionalidad"
+                        value={nuevaFeature[plan.id] || ''}
+                        onChange={e => setNuevaFeature(prev => ({ ...prev, [plan.id]: e.target.value }))}
+                        onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), handleAgregarFeature(plan))}
+                        className="flex-1 px-3 py-2 rounded-lg border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                      <button onClick={() => handleAgregarFeature(plan)} className="bg-slate-800 text-white text-sm font-bold px-4 py-2 rounded-lg hover:bg-slate-700">Agregar</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'promociones' && (
+            <div className="space-y-6">
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+                <h2 className="text-lg font-bold text-slate-800 mb-4">Nueva Promoción</h2>
+                <form onSubmit={handleCrearPromo} className="grid grid-cols-1 md:grid-cols-5 gap-3">
+                  <input required placeholder="Código (ej. VERANO20)" value={nuevaPromo.code} onChange={e => setNuevaPromo({ ...nuevaPromo, code: e.target.value })} className="px-4 py-2 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500" />
+                  <select value={nuevaPromo.discountType} onChange={e => setNuevaPromo({ ...nuevaPromo, discountType: e.target.value })} className="px-4 py-2 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500">
+                    <option value="percentage">% Porcentaje</option>
+                    <option value="fixed">S/ Monto fijo</option>
+                  </select>
+                  <input required type="number" placeholder="Valor" value={nuevaPromo.discountValue} onChange={e => setNuevaPromo({ ...nuevaPromo, discountValue: e.target.value })} className="px-4 py-2 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500" />
+                  <input type="date" value={nuevaPromo.expiresAt} onChange={e => setNuevaPromo({ ...nuevaPromo, expiresAt: e.target.value })} className="px-4 py-2 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500" />
+                  <button type="submit" className="bg-indigo-600 text-white rounded-lg font-bold px-4 py-2 hover:bg-indigo-700">Crear</button>
+                </form>
+              </div>
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                {promocionesError && <div className="m-6 p-3 rounded-lg bg-rose-50 text-rose-700 text-sm">{promocionesError}</div>}
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
+                      <th className="p-4 font-bold border-b border-slate-200">Código</th>
+                      <th className="p-4 font-bold border-b border-slate-200">Descuento</th>
+                      <th className="p-4 font-bold border-b border-slate-200">Vence</th>
+                      <th className="p-4 font-bold border-b border-slate-200">Estado</th>
+                      <th className="p-4 font-bold border-b border-slate-200 text-right">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-sm">
+                    {promocionesLoading && <tr><td colSpan={5} className="p-6 text-center text-slate-400">Cargando promociones...</td></tr>}
+                    {!promocionesLoading && promociones.length === 0 && <tr><td colSpan={5} className="p-6 text-center text-slate-400">Aún no hay promociones creadas.</td></tr>}
+                    {promociones.map((promo: any) => (
+                      <tr key={promo.id} className="border-b border-slate-100 hover:bg-slate-50">
+                        <td className="p-4 font-mono font-bold text-slate-800">{promo.code}</td>
+                        <td className="p-4 text-slate-600">{promo.discount_value}{promo.discount_type === 'percentage' ? '%' : ' soles'}</td>
+                        <td className="p-4 text-slate-500">{promo.expires_at || 'Sin vencimiento'}</td>
+                        <td className="p-4">
+                          <span className={`px-2 py-1 rounded font-medium text-xs ${promo.active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                            {promo.active ? 'Activa' : 'Inactiva'}
+                          </span>
+                        </td>
+                        <td className="p-4 flex gap-2 justify-end">
+                          <button onClick={() => handleTogglePromo(promo.id, !promo.active)} className="text-slate-600 hover:text-indigo-600 font-medium text-sm border border-slate-200 px-3 py-1 rounded-lg">
+                            {promo.active ? 'Desactivar' : 'Activar'}
+                          </button>
+                          <button onClick={() => handleEliminarPromo(promo.id)} className="text-rose-600 hover:text-rose-800 font-medium text-sm bg-rose-50 px-3 py-1 rounded-lg">Eliminar</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'usuarios' && (
+            <div className="space-y-6">
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+                <h2 className="text-lg font-bold text-slate-800 mb-4">Nuevo Administrador</h2>
+                <form onSubmit={handleCrearAdmin} className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <input required type="email" placeholder="Correo" value={nuevoAdmin.email} onChange={e => setNuevoAdmin({ ...nuevoAdmin, email: e.target.value })} className="px-4 py-2 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500" />
+                  <input required type="password" placeholder="Contraseña (mín. 8 caracteres)" value={nuevoAdmin.password} onChange={e => setNuevoAdmin({ ...nuevoAdmin, password: e.target.value })} className="px-4 py-2 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500" />
+                  <button type="submit" className="bg-indigo-600 text-white rounded-lg font-bold px-4 py-2 hover:bg-indigo-700">Crear Administrador</button>
+                </form>
+              </div>
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                {adminUsersError && <div className="m-6 p-3 rounded-lg bg-rose-50 text-rose-700 text-sm">{adminUsersError}</div>}
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
+                      <th className="p-4 font-bold border-b border-slate-200">Correo</th>
+                      <th className="p-4 font-bold border-b border-slate-200">Estado</th>
+                      <th className="p-4 font-bold border-b border-slate-200">Último acceso</th>
+                      <th className="p-4 font-bold border-b border-slate-200 text-right">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-sm">
+                    {adminUsersLoading && <tr><td colSpan={4} className="p-6 text-center text-slate-400">Cargando administradores...</td></tr>}
+                    {!adminUsersLoading && adminUsers.length === 0 && (
+                      <tr><td colSpan={4} className="p-6 text-center text-slate-400">Solo existe la cuenta maestra configurada por variables de entorno. Crea aquí administradores adicionales.</td></tr>
+                    )}
+                    {adminUsers.map((admin: any) => (
+                      <tr key={admin.id} className="border-b border-slate-100 hover:bg-slate-50">
+                        <td className="p-4 font-bold text-slate-800">{admin.email}</td>
+                        <td className="p-4">
+                          <span className={`px-2 py-1 rounded font-medium text-xs ${admin.active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                            {admin.active ? 'Activo' : 'Desactivado'}
+                          </span>
+                        </td>
+                        <td className="p-4 text-slate-500">{admin.last_login_at ? new Date(admin.last_login_at).toLocaleString('es-PE') : 'Nunca'}</td>
+                        <td className="p-4 flex gap-2 justify-end">
+                          <button onClick={() => handleToggleAdmin(admin.id, !admin.active)} className="text-slate-600 hover:text-indigo-600 font-medium text-sm border border-slate-200 px-3 py-1 rounded-lg">
+                            {admin.active ? 'Desactivar' : 'Activar'}
+                          </button>
+                          <button onClick={() => handleEliminarAdmin(admin.id)} className="text-rose-600 hover:text-rose-800 font-medium text-sm bg-rose-50 px-3 py-1 rounded-lg">Eliminar</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'soporte' && (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="p-6 border-b border-slate-200">
+                <h2 className="text-lg font-bold text-slate-800">Tickets de Soporte</h2>
+                <p className="text-slate-500 text-sm">Tickets abiertos por los negocios que usan la plataforma.</p>
+              </div>
+              {ticketsError && <div className="mx-6 mt-4 p-3 rounded-lg bg-rose-50 text-rose-700 text-sm">{ticketsError}</div>}
+              <div className="divide-y divide-slate-100">
+                {ticketsLoading && <p className="p-6 text-center text-slate-400 text-sm">Cargando tickets...</p>}
+                {!ticketsLoading && tickets.length === 0 && !ticketsError && (
+                  <p className="p-6 text-center text-slate-400 text-sm">No hay tickets de soporte abiertos en este momento.</p>
+                )}
+                {tickets.map((t: any) => (
+                  <div key={t.id} className="p-6">
+                    <div className="flex items-center justify-between mb-2">
+                      <div>
+                        <span className="font-bold text-slate-800">{t.business_name || t.email || 'Cliente'}</span>
+                        <span className={`ml-3 px-2 py-1 rounded font-medium text-xs ${t.status === 'Abierto' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>{t.status}</span>
+                      </div>
+                      <span className="text-slate-400 text-xs">{new Date(t.created_at).toLocaleString('es-PE')}</span>
+                    </div>
+                    <div className="font-medium text-slate-700 mb-1">{t.subject}</div>
+                    <p className="text-slate-600 text-sm mb-3">{t.message}</p>
+                    {t.reply && (
+                      <div className="bg-slate-50 rounded-lg p-3 text-sm text-slate-600 mb-3">
+                        <span className="font-bold text-slate-700">Respuesta enviada:</span> {t.reply}
+                      </div>
+                    )}
+                    {t.status === 'Abierto' && (
+                      <div className="flex gap-2">
+                        <input
+                          placeholder="Escribe una respuesta..."
+                          value={replyDrafts[t.id] || ''}
+                          onChange={e => setReplyDrafts(prev => ({ ...prev, [t.id]: e.target.value }))}
+                          className="flex-1 px-3 py-2 rounded-lg border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                        <button onClick={() => handleResponderTicket(t.id)} className="bg-indigo-600 text-white text-sm font-bold px-4 py-2 rounded-lg hover:bg-indigo-700">Responder</button>
+                        <button onClick={() => handleCerrarTicket(t.id)} className="text-slate-500 hover:text-rose-600 text-sm font-medium px-3 py-2 rounded-lg border border-slate-200">Cerrar</button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'reportes' && (
+            <div className="space-y-6">
+              {reportesError && <div className="p-3 rounded-lg bg-rose-50 text-rose-700 text-sm">{reportesError}</div>}
+              {reportesLoading && <p className="text-slate-400 text-sm">Cargando reportes...</p>}
+              {!reportesLoading && reportes && (
+                <>
+                  <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+                    <h2 className="text-lg font-bold text-slate-800 mb-4">Ingresos Aprobados (últimos 30 días)</h2>
+                    {reportes.ingresosPorDia.length === 0 ? (
+                      <p className="text-slate-400 text-sm">Aún no hay pagos aprobados en este periodo.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {reportes.ingresosPorDia.map((d: any) => (
+                          <div key={d.fecha} className="flex items-center gap-3">
+                            <span className="text-slate-500 text-xs w-24">{d.fecha}</span>
+                            <div className="flex-1 bg-slate-100 rounded-full h-3 overflow-hidden">
+                              <div className="bg-indigo-500 h-3" style={{ width: `${Math.min(100, (d.total / Math.max(...reportes.ingresosPorDia.map((x: any) => x.total))) * 100)}%` }} />
+                            </div>
+                            <span className="text-slate-700 text-xs font-bold w-16 text-right">S/ {d.total}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+                      <h2 className="text-lg font-bold text-slate-800 mb-4">Empresas por Plan</h2>
+                      <div className="space-y-2">
+                        {reportes.empresasPorPlan.map((p: any) => (
+                          <div key={p.plan} className="flex items-center justify-between text-sm">
+                            <span className="text-slate-600">{p.plan}</span>
+                            <span className="font-bold text-slate-800">{p.total}</span>
+                          </div>
+                        ))}
+                        {reportes.empresasPorPlan.length === 0 && <p className="text-slate-400 text-sm">Sin datos.</p>}
+                      </div>
+                    </div>
+                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+                      <h2 className="text-lg font-bold text-slate-800 mb-4">Pagos por Estado (30 días)</h2>
+                      <div className="space-y-2">
+                        {reportes.pagosPorEstado.map((p: any) => (
+                          <div key={p.estado} className="flex items-center justify-between text-sm">
+                            <span className="text-slate-600">{p.estado}</span>
+                            <span className="font-bold text-slate-800">{p.total}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'crm' && (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="p-6 border-b border-slate-200">
+                <h2 className="text-lg font-bold text-slate-800">CRM Comercial — Leads en Prueba Gratuita</h2>
+                <p className="text-slate-500 text-sm">Empresas en periodo de prueba, ordenadas por proximidad de vencimiento.</p>
+              </div>
+              {crmError && <div className="mx-6 mt-4 p-3 rounded-lg bg-rose-50 text-rose-700 text-sm">{crmError}</div>}
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
+                      <th className="p-4 font-bold border-b border-slate-200">Empresa</th>
+                      <th className="p-4 font-bold border-b border-slate-200">Plan interesado</th>
+                      <th className="p-4 font-bold border-b border-slate-200">Registro</th>
+                      <th className="p-4 font-bold border-b border-slate-200">Vence prueba</th>
+                      <th className="p-4 font-bold border-b border-slate-200">Días restantes</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-sm">
+                    {crmLoading && <tr><td colSpan={5} className="p-6 text-center text-slate-400">Cargando leads...</td></tr>}
+                    {!crmLoading && crmLeads.length === 0 && !crmError && (
+                      <tr><td colSpan={5} className="p-6 text-center text-slate-400">No hay empresas en prueba gratuita actualmente.</td></tr>
+                    )}
+                    {crmLeads.map((lead: any) => (
+                      <tr key={lead.id} className="border-b border-slate-100 hover:bg-slate-50">
+                        <td className="p-4 font-bold text-slate-800">{lead.empresa}</td>
+                        <td className="p-4 text-slate-600">{lead.plan}</td>
+                        <td className="p-4 text-slate-500">{lead.registro}</td>
+                        <td className="p-4 text-slate-500">{lead.vencimiento || '-'}</td>
+                        <td className="p-4">
+                          <span className={`px-2 py-1 rounded font-medium text-xs ${lead.diasRestantes !== null && lead.diasRestantes <= 3 ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}`}>
+                            {lead.diasRestantes !== null ? `${lead.diasRestantes} días` : '-'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {activeTab !== 'dashboard' && activeTab !== 'pagos' && activeTab !== 'empresas' && activeTab !== 'suscripciones' && activeTab !== 'configuracion' && activeTab !== 'auditoria' && activeTab !== 'planes' && activeTab !== 'funcionalidades' && activeTab !== 'promociones' && activeTab !== 'usuarios' && activeTab !== 'soporte' && activeTab !== 'reportes' && activeTab !== 'crm' && (
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-12 text-center">
               <div className="w-20 h-20 bg-indigo-50 text-indigo-500 rounded-full flex items-center justify-center mx-auto mb-6">
                 {React.createElement(menuItems.find(i => i.id === activeTab)?.icon || Blocks, { className: 'w-10 h-10' })}
