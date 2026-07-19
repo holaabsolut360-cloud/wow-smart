@@ -132,7 +132,7 @@ export default function Landing() {
             <ul className="flex-grow space-y-4 mb-8">
               <li className="flex items-start gap-3 text-sm text-white font-medium">
                 <CheckCircle className="w-5 h-5 text-indigo-300 shrink-0" />
-                <span>Hasta 500 productos</span>
+                <span>Hasta 300 productos</span>
               </li>
               <li className="flex items-start gap-3 text-sm text-white font-medium">
                 <CheckCircle className="w-5 h-5 text-indigo-300 shrink-0" />
@@ -192,7 +192,7 @@ export default function Landing() {
               </li>
               <li className="flex items-start gap-3 text-sm text-slate-600 font-medium">
                 <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
-                <span>Productos ilimitados</span>
+                <span>Hasta 700 productos</span>
               </li>
               <li className="flex items-start gap-3 text-sm text-slate-600 font-medium">
                 <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
