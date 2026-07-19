@@ -64,9 +64,13 @@ export default function Dashboard() {
 
   const isServiceBusiness = company?.businessType === 'Estudio de Abogados' || company?.businessType === 'Servicios Profesionales' || company?.businessType === 'Agencia de Publicidad' || company?.businessType === 'Imprenta';
   const isGastronomic = company?.businessType === 'Restaurante';
-  const termProduct = isServiceBusiness ? 'Servicios' : 'Productos';
+  // Un mismo negocio puede tener a la vez ítems de tipo "Producto" y "Servicio" en su
+  // catálogo (ver itemType en cada ítem), así que estos textos ya no asumen un catálogo
+  // homogéneo basado únicamente en company.businessType. Solo los rubros 100% de servicio
+  // usan un término exclusivo; el resto usa una etiqueta que cubre ambos casos.
+  const termProduct = isServiceBusiness ? 'Servicios' : 'Productos y Servicios';
   const termOrder = isServiceBusiness ? 'Solicitudes' : 'Pedidos';
-  const termProductsTitle = isServiceBusiness ? 'Mis Servicios' : 'Mis Productos';
+  const termProductsTitle = isServiceBusiness ? 'Mis Servicios' : 'Mis Productos y Servicios';
 
   useEffect(() => {
     // Fetch user 1 dashboard data
@@ -274,6 +278,9 @@ export default function Dashboard() {
             <p className="text-amber-600 text-sm mt-1">
               Para seguir utilizando todas las funcionalidades, por favor suscríbete al plan Emprendedor.
             </p>
+            <p className="text-amber-500 text-xs mt-1">
+              El precio mostrado (S/ 15) no incluye IGV; al pagar se añade el 18% de impuesto de ley.
+            </p>
             <Link to="/checkout/emprendedor" className="inline-block mt-3 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-bold rounded-lg transition-colors">
               Suscribirme ahora
             </Link>
@@ -286,6 +293,9 @@ export default function Dashboard() {
               <ShieldCheck className="w-5 h-5" />
               Estás en el período de Prueba Gratuita (Vence: {new Date(company.subscriptionEndsAt).toLocaleDateString()})
             </h3>
+            <p className="text-indigo-500 text-xs mt-1">
+              Los precios de los planes (S/ 15 o S/ 39) no incluyen IGV; al pagar se añade el 18% de impuesto de ley.
+            </p>
             <Link to="/checkout/emprendedor" className="inline-block mt-3 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-lg transition-colors">
               Suscribirme ahora
             </Link>
@@ -300,6 +310,9 @@ export default function Dashboard() {
             </h3>
             <p className="text-rose-600 text-sm mt-1">
               Tu cuenta se encuentra suspendida por falta de pago. Por favor, regulariza tu pago para restablecer el acceso a todas las funcionalidades.
+            </p>
+            <p className="text-rose-500 text-xs mt-1">
+              Los precios de los planes (S/ 15 o S/ 39) no incluyen IGV; al pagar se añade el 18% de impuesto de ley.
             </p>
             <Link to="/checkout/negocio" className="inline-block mt-3 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-sm font-bold rounded-lg transition-colors">
               Pagar ahora
