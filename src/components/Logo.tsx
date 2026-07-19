@@ -4,9 +4,9 @@ interface LogoProps {
 }
 
 const HEIGHTS = {
-  sm: "h-8",
-  md: "h-10",
-  lg: "h-14",
+  sm: "h-10",
+  md: "h-14",
+  lg: "h-16",
 };
 
 // Logotipo real de WowSmart (public/logo.png).
