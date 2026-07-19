@@ -523,6 +523,7 @@ const authMiddleware = async (req: express.Request, res: express.Response, next:
     req.path.startsWith('/catalog') ||
     req.path.startsWith('/superadmin') ||
     req.path === '/approve-subscription' ||
+    req.path === '/complaints' ||
     (req.method === 'GET' && req.path === '/products') ||
     (req.method === 'POST' && req.path === '/orders');
 
@@ -684,6 +685,41 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     clearSuperAdminCookie(res);
     logSuperAdminAction("LOGOUT", null, null, null, "Cierre de sesión del panel SuperAdmin");
     res.json({ authenticated: false });
+  });
+
+  // Libro de Reclamaciones — endpoint público, no requiere sesión
+  app.post("/api/complaints", async (req, res) => {
+    const { nombres, apellidos, tipoDocumento, numeroDocumento, email, telefono, tipo, detalle, pedido } = req.body || {};
+
+    if (!nombres || !apellidos || !numeroDocumento || !email || !telefono || !detalle || !pedido) {
+      return res.status(400).json({ error: "Faltan campos obligatorios del formulario" });
+    }
+
+    if (!useSupabaseDb) {
+      return res.json({ id: Date.now().toString() });
+    }
+
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const { data, error } = await client
+      .from("complaints_book_entries")
+      .insert({
+        nombres,
+        apellidos,
+        tipo_documento: tipoDocumento || "DNI",
+        numero_documento: numeroDocumento,
+        email,
+        telefono,
+        tipo: tipo === "Queja" ? "Queja" : "Reclamo",
+        detalle,
+        pedido,
+      })
+      .select("id")
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ id: data.id });
   });
 
   // Registrar un comprobante de pago desde el Checkout del cliente
@@ -1405,6 +1441,46 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
 
     if (error) return res.status(500).json({ error: error.message });
     res.json(data);
+  });
+
+  // ==================== LIBRO DE RECLAMACIONES ====================
+  app.get("/api/superadmin/reclamos", requireSuperAdmin, async (_req, res) => {
+    if (!useSupabaseDb) return res.json({ data: [] });
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const { data, error } = await client
+      .from("complaints_book_entries")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ data: data || [] });
+  });
+
+  app.put("/api/superadmin/reclamos/:id/atender", requireSuperAdmin, async (req, res) => {
+    if (!useSupabaseDb) return res.status(503).json({ error: "Supabase is not configured" });
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const { data, error } = await client
+      .from("complaints_book_entries")
+      .update({ status: "Atendido" })
+      .eq("id", req.params.id)
+      .select("nombres, apellidos, tipo")
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    await logSuperAdminAction(
+      "ATENDER_RECLAMO",
+      "complaint",
+      req.params.id,
+      `${data?.nombres || ""} ${data?.apellidos || ""}`.trim(),
+      `${data?.tipo || "Reclamo"} marcado como atendido.`,
+    );
+
+    res.json({ success: true });
   });
 
   app.get("/api/superadmin/soporte", requireSuperAdmin, async (_req, res) => {
