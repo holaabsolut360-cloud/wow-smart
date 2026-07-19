@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import React, { useMemo, useState } from 'react';
 import { motion } from 'motion/react';
-import { ExternalLink, Plus, Trash2, Edit2 } from 'lucide-react';
+import { ExternalLink, Plus, Trash2, Edit2, Lock, ArrowRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { Company, Product, Category } from '../../types';
@@ -14,12 +14,23 @@ interface ProductsTabProps {
   categories: Category[];
 }
 
+// Determina a qué plan conviene subir según el plan actual de la empresa.
+// Devuelve null si ya está en el plan más alto (Empresa).
+const getNextPlan = (currentPlan?: string | null): { slug: string; name: string } | null => {
+  const plan = (currentPlan || '').trim();
+  if (plan === 'Emprendedor') return { slug: 'negocio', name: 'Negocio Pequeño' };
+  if (plan === 'Negocio Pequeño') return { slug: 'empresa', name: 'Empresa' };
+  return null;
+};
+
 export function ProductsTab({ company, categories }: ProductsTabProps) {
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [isImporting, setIsImporting] = useState(false);
   const [importMessage, setImportMessage] = useState('');
   const [importError, setImportError] = useState('');
+  const [showLimitModal, setShowLimitModal] = useState(false);
+  const [limitMessage, setLimitMessage] = useState('');
   const limit = 20;
 
   const { data: productsData, isLoading } = useQuery({
@@ -52,6 +63,16 @@ export function ProductsTab({ company, categories }: ProductsTabProps) {
       queryClient.invalidateQueries({ queryKey: ['products', company?.id] });
       setIsAdding(false);
       setNewProd({});
+    },
+    onError: (error: any) => {
+      const message = String(error?.message || '');
+      if (message.includes('LIMITE_PLAN_ALCANZADO')) {
+        const match = message.match(/LIMITE_PLAN_ALCANZADO:\s*(.+)/);
+        setLimitMessage(match ? match[1] : 'Alcanzaste el límite de productos de tu plan actual.');
+        setShowLimitModal(true);
+      } else {
+        alert(message || 'No se pudo guardar el producto.');
+      }
     }
   });
 
@@ -170,8 +191,17 @@ export function ProductsTab({ company, categories }: ProductsTabProps) {
 
       const successCount = results.filter((result) => result.status === 'fulfilled').length;
       const failCount = results.length - successCount;
+      const limitHit = results.some(
+        (result) => result.status === 'rejected' && String((result as any).reason?.message || '').includes('LIMITE_PLAN_ALCANZADO')
+      );
 
       queryClient.invalidateQueries({ queryKey: ['products', company?.id] });
+
+      if (limitHit) {
+        setLimitMessage('Algunos productos no se importaron porque alcanzaste el límite de tu plan actual.');
+        setShowLimitModal(true);
+      }
+
       setImportMessage(
         `Importación completada: ${successCount} producto(s) creados${skipped ? `, ${skipped} fila(s) omitidas` : ''}${failCount ? `, ${failCount} fallidas` : ''}.`,
       );
@@ -213,8 +243,54 @@ export function ProductsTab({ company, categories }: ProductsTabProps) {
   const isServiceBusiness = company?.businessType === 'Estudio de Abogados' || company?.businessType === 'Servicios Profesionales' || company?.businessType === 'Agencia de Publicidad' || company?.businessType === 'Imprenta';
   const termProductsTitle = isServiceBusiness ? 'Servicios' : 'Productos';
 
+  const nextPlan = getNextPlan(company?.plan);
+
   return (
           <>
+            {showLimitModal && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+                onClick={() => setShowLimitModal(false)}
+              >
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="bg-white rounded-3xl shadow-xl max-w-md w-full p-8 text-center"
+                >
+                  <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <Lock className="w-8 h-8" />
+                  </div>
+                  <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight mb-3">
+                    Alcanzaste el límite de tu plan
+                  </h2>
+                  <p className="text-slate-500 mb-8">
+                    {limitMessage || 'Alcanzaste el límite de productos de tu plan actual.'}
+                  </p>
+                  {nextPlan ? (
+                    <Link
+                      to={`/checkout/${nextPlan.slug}`}
+                      className="w-full inline-flex justify-center items-center gap-2 py-3.5 px-6 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md shadow-indigo-600/20 transition-all mb-3"
+                    >
+                      Mejorar a plan {nextPlan.name} <ArrowRight className="w-5 h-5" />
+                    </Link>
+                  ) : (
+                    <p className="text-slate-500 text-sm mb-3">
+                      Ya tienes el plan más alto disponible. Contáctanos si necesitas más capacidad.
+                    </p>
+                  )}
+                  <button
+                    onClick={() => setShowLimitModal(false)}
+                    className="w-full py-3 text-slate-500 font-semibold hover:text-slate-700 transition-colors"
+                  >
+                    Cerrar
+                  </button>
+                </motion.div>
+              </motion.div>
+            )}
+
             <header className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 mb-10">
               <div>
                 <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight">{termProductsTitle}</h1>
