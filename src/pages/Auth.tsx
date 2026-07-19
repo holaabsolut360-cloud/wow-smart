@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ShoppingCart, Mail, Lock, User, ArrowRight, ArrowLeft, ShieldCheck, CheckCircle2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import Logo from '../components/Logo';
 
 type AuthView = 'login' | 'register' | 'forgot-password' | 'reset-sent' | 'onboarding';
 
@@ -79,7 +80,7 @@ export default function Auth() {
 
         <div className="relative z-10">
           <Link to="/" className="flex items-center gap-2 mb-12 w-fit">
-            <img src="/logo.png" alt="WowSmart" className="h-12 object-contain" />
+            <Logo size="lg" />
           </Link>
           
           <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight leading-tight mb-6">
@@ -117,7 +118,7 @@ export default function Auth() {
       {/* Right Panel - Form */}
       <div className="w-full md:w-1/2 flex items-center justify-center p-6 md:p-12 relative">
         <Link to="/" className="md:hidden absolute top-6 left-6 flex items-center gap-2">
-          <img src="/logo.png" alt="WowSmart" className="h-8 object-contain" />
+          <Logo size="sm" />
         </Link>
 
         <div className="w-full max-w-md mt-16 md:mt-0">
