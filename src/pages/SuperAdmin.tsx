@@ -22,7 +22,8 @@ import {
   X,
   CheckCircle,
   XCircle,
-  Image as ImageIcon
+  Image as ImageIcon,
+  FileText
 } from 'lucide-react';
 
 export default function SuperAdmin() {
@@ -162,6 +163,10 @@ export default function SuperAdmin() {
   const [crmLeads, setCrmLeads] = useState<any[]>([]);
   const [crmLoading, setCrmLoading] = useState(false);
   const [crmError, setCrmError] = useState('');
+
+  const [reclamos, setReclamos] = useState<any[]>([]);
+  const [reclamosLoading, setReclamosLoading] = useState(false);
+  const [reclamosError, setReclamosError] = useState('');
   const [auditoriaLoading, setAuditoriaLoading] = useState(false);
   const [auditoriaError, setAuditoriaError] = useState('');
 
@@ -270,6 +275,31 @@ export default function SuperAdmin() {
       setCrmError(err.message || 'Error al cargar CRM');
     } finally {
       setCrmLoading(false);
+    }
+  };
+
+  const fetchReclamos = async () => {
+    setReclamosLoading(true);
+    setReclamosError('');
+    try {
+      const res = await fetch('/api/superadmin/reclamos');
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || 'No se pudieron cargar los reclamos');
+      const { data } = await res.json();
+      setReclamos(data || []);
+    } catch (err: any) {
+      setReclamosError(err.message || 'Error al cargar el libro de reclamaciones');
+    } finally {
+      setReclamosLoading(false);
+    }
+  };
+
+  const handleAtenderReclamo = async (id: string) => {
+    try {
+      const res = await fetch(`/api/superadmin/reclamos/${id}/atender`, { method: 'PUT' });
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || 'No se pudo actualizar el reclamo');
+      await Promise.all([fetchReclamos(), fetchAuditoria()]);
+    } catch (err: any) {
+      alert(err.message || 'Error al actualizar el reclamo');
     }
   };
 
@@ -473,6 +503,7 @@ export default function SuperAdmin() {
       fetchTickets();
       fetchReportes();
       fetchCrmLeads();
+      fetchReclamos();
     }
   }, [isAuthenticated]);
 
@@ -610,6 +641,7 @@ export default function SuperAdmin() {
     { id: 'configuracion', label: 'Configuración General', icon: Settings },
     { id: 'auditoria', label: 'Auditoría', icon: ShieldCheck },
     { id: 'crm', label: 'CRM Comercial', icon: Handshake },
+    { id: 'reclamos', label: 'Libro de Reclamaciones', icon: FileText },
   ];
 
   if (authChecking) {
@@ -1421,7 +1453,45 @@ export default function SuperAdmin() {
             </div>
           )}
 
-          {activeTab !== 'dashboard' && activeTab !== 'pagos' && activeTab !== 'empresas' && activeTab !== 'suscripciones' && activeTab !== 'configuracion' && activeTab !== 'auditoria' && activeTab !== 'planes' && activeTab !== 'funcionalidades' && activeTab !== 'promociones' && activeTab !== 'usuarios' && activeTab !== 'soporte' && activeTab !== 'reportes' && activeTab !== 'crm' && (
+          {activeTab === 'reclamos' && (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="p-6 border-b border-slate-200">
+                <h2 className="text-lg font-bold text-slate-800">Libro de Reclamaciones</h2>
+                <p className="text-slate-500 text-sm">Reclamos y quejas registrados por consumidores, conforme al Código de Protección y Defensa del Consumidor.</p>
+              </div>
+              {reclamosError && <div className="mx-6 mt-4 p-3 rounded-lg bg-rose-50 text-rose-700 text-sm">{reclamosError}</div>}
+              <div className="divide-y divide-slate-100">
+                {reclamosLoading && <p className="p-6 text-center text-slate-400 text-sm">Cargando reclamos...</p>}
+                {!reclamosLoading && reclamos.length === 0 && !reclamosError && (
+                  <p className="p-6 text-center text-slate-400 text-sm">Aún no se ha registrado ningún reclamo o queja.</p>
+                )}
+                {reclamos.map((r: any) => (
+                  <div key={r.id} className="p-6">
+                    <div className="flex items-center justify-between mb-2">
+                      <div>
+                        <span className="font-bold text-slate-800">{r.nombres} {r.apellidos}</span>
+                        <span className={`ml-3 px-2 py-1 rounded font-medium text-xs ${r.tipo === 'Reclamo' ? 'bg-indigo-100 text-indigo-700' : 'bg-amber-100 text-amber-700'}`}>{r.tipo}</span>
+                        <span className={`ml-2 px-2 py-1 rounded font-medium text-xs ${r.status === 'Pendiente' ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'}`}>{r.status}</span>
+                      </div>
+                      <span className="text-slate-400 text-xs">{new Date(r.created_at).toLocaleString('es-PE')}</span>
+                    </div>
+                    <div className="text-xs text-slate-500 mb-2">
+                      {r.tipo_documento} {r.numero_documento} · {r.email} · {r.telefono}
+                    </div>
+                    <p className="text-slate-700 text-sm mb-1"><span className="font-bold">Detalle:</span> {r.detalle}</p>
+                    <p className="text-slate-600 text-sm mb-3"><span className="font-bold">Pedido:</span> {r.pedido}</p>
+                    {r.status === 'Pendiente' && (
+                      <button onClick={() => handleAtenderReclamo(r.id)} className="text-emerald-600 hover:text-emerald-800 font-medium text-sm bg-emerald-50 px-3 py-1.5 rounded-lg">
+                        Marcar como atendido
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {activeTab !== 'dashboard' && activeTab !== 'pagos' && activeTab !== 'empresas' && activeTab !== 'suscripciones' && activeTab !== 'configuracion' && activeTab !== 'auditoria' && activeTab !== 'planes' && activeTab !== 'funcionalidades' && activeTab !== 'promociones' && activeTab !== 'usuarios' && activeTab !== 'soporte' && activeTab !== 'reportes' && activeTab !== 'crm' && activeTab !== 'reclamos' && (
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-12 text-center">
               <div className="w-20 h-20 bg-indigo-50 text-indigo-500 rounded-full flex items-center justify-center mx-auto mb-6">
                 {React.createElement(menuItems.find(i => i.id === activeTab)?.icon || Blocks, { className: 'w-10 h-10' })}
