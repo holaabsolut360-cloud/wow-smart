@@ -4,6 +4,7 @@ import { supabase } from "../lib/supabase";
 import { motion } from "motion/react";
 import { Settings, Package, LogOut, Download, Plus, Trash2, Edit2, ExternalLink, PlusCircle, BarChart3, ShieldCheck } from "lucide-react";
 import { Company, Product, Expense, Customer, AuditLog, SystemUser, Backup, Ingredient, Debt, DebtPayment, CRMDeal, Supplier, PurchaseOrder, Batch } from "../types";
+import Logo from '../components/Logo';
 import { PosSystem } from "../components/PosSystem";
 import { CategoriesTab } from '../components/dashboard/CategoriesTab';
 import { CouponsTab } from '../components/dashboard/CouponsTab';
@@ -124,7 +125,7 @@ export default function Dashboard() {
       {/* Sidebar */}
       <aside className="w-full md:w-64 bg-white border-b md:border-b-0 md:border-r border-slate-200 p-4 md:p-6 flex md:flex-col flex-shrink-0 md:sticky md:top-0 md:h-screen md:overflow-y-auto z-10">
         <div className="flex items-center gap-2 mb-0 md:mb-10 mr-auto md:mr-0">
-          <img src="/logo.png" alt="WowSmart" className="h-10 object-contain" />
+          <Logo size="md" />
         </div>
         <div className="hidden md:block mb-6">
           <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Simular Rol</label>
