@@ -19,7 +19,7 @@ const PLAN_DETAILS = {
     name: 'Negocio Pequeño',
     price: 39,
     features: [
-      'Hasta 500 productos',
+      'Hasta 300 productos',
       'Punto de Venta (POS)',
       'Control de Inventario',
       'Gestión de Clientes (CRM)'
@@ -29,13 +29,25 @@ const PLAN_DETAILS = {
     name: 'Empresa',
     price: 79,
     features: [
-      'Productos Ilimitados',
+      'Hasta 700 productos',
       'Todo lo del plan Negocio',
       'Múltiples sucursales',
       'Soporte prioritario'
     ]
   }
 };
+
+// IGV Perú. Cuando exista pasarela real (Izipay), este cálculo
+// puede ajustarse o delegarse al proveedor de pago.
+const IGV_RATE = 0.18;
+
+// Métodos habilitados por ahora. "Tarjeta" queda comentado hasta
+// que se configure la pasarela de pagos (Izipay) de la empresa.
+const PAYMENT_METHODS = [
+  // { id: 'tarjeta', label: 'Tarjeta de Crédito / Débito (Izipay)' }, // Próximamente
+  { id: 'yape', label: 'Yape' },
+  { id: 'plin', label: 'Plin' },
+];
 
 type CheckoutStep = 'summary' | 'payment-method' | 'payment-details' | 'register' | 'success';
 
@@ -44,6 +56,9 @@ export default function Checkout() {
   const navigate = useNavigate();
   
   const selectedPlan = PLAN_DETAILS[(planId as keyof typeof PLAN_DETAILS) || 'negocio'];
+
+  const igvAmount = Math.round(selectedPlan.price * IGV_RATE * 100) / 100;
+  const totalWithIgv = Math.round((selectedPlan.price + igvAmount) * 100) / 100;
   
   const [step, setStep] = useState<CheckoutStep>('summary');
   const [formData, setFormData] = useState({
@@ -56,13 +71,27 @@ export default function Checkout() {
   const [isLoading, setIsLoading] = useState(false);
   const [paymentSettings, setPaymentSettings] = useState({ companyName: "WowSmart SAC", accountNumber: "999 888 777" });
 
+  // Datos de pago (nombre/número para Yape/Plin) ahora se leen desde
+  // Supabase (tabla platform_settings) en vez de localStorage, para
+  // que lo que configure el SuperAdmin se vea igual en cualquier
+  // dispositivo/navegador del cliente.
   React.useEffect(() => {
-    const saved = localStorage.getItem('paymentSettings');
-    if (saved) {
+    const loadPaymentSettings = async () => {
       try {
-        setPaymentSettings(JSON.parse(saved));
-      } catch (e) {}
-    }
+        const { data, error } = await supabase
+          .from('platform_settings')
+          .select('value')
+          .eq('key', 'payment_settings')
+          .maybeSingle();
+
+        if (!error && data?.value) {
+          setPaymentSettings(data.value as { companyName: string; accountNumber: string });
+        }
+      } catch (e) {
+        // Si falla la carga, se mantienen los valores por defecto.
+      }
+    };
+    loadPaymentSettings();
   }, []);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -84,7 +113,7 @@ export default function Checkout() {
         body: JSON.stringify({
           businessName,
           plan: selectedPlan.name,
-          amount: selectedPlan.price,
+          amount: totalWithIgv,
           paymentMethod,
         }),
       });
@@ -181,13 +210,13 @@ export default function Checkout() {
 
             return (
               <div key={s.id} className="flex flex-col items-center">
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold border-2 transition-colors \${
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold border-2 transition-colors ${
                   isCompleted ? 'bg-indigo-600 border-indigo-600 text-white' : 
                   isCurrent ? 'bg-white border-indigo-600 text-indigo-600' : 'bg-white border-slate-300 text-slate-400'
                 }`}>
                   {isCompleted ? <CheckCircle2 className="w-5 h-5" /> : i + 1}
                 </div>
-                <span className={`text-xs mt-2 font-medium absolute -bottom-6 whitespace-nowrap \${isCurrent || isCompleted ? 'text-slate-800' : 'text-slate-400'}`}>
+                <span className={`text-xs mt-2 font-medium absolute -bottom-6 whitespace-nowrap ${isCurrent || isCompleted ? 'text-slate-800' : 'text-slate-400'}`}>
                   {s.label}
                 </span>
               </div>
@@ -209,10 +238,11 @@ export default function Checkout() {
               >
                 <div className="p-8 border-b border-slate-100 text-center bg-slate-900 text-white">
                   <h2 className="text-2xl font-extrabold tracking-tight mb-2">Plan {selectedPlan.name}</h2>
-                  <div className="flex items-end justify-center gap-1 mb-4">
+                  <div className="flex items-end justify-center gap-1 mb-1">
                     <span className="text-5xl font-black">S/ {selectedPlan.price}</span>
                     <span className="text-slate-400 font-medium mb-1">/mes</span>
                   </div>
+                  <p className="text-slate-400 text-xs mb-4">+ IGV (18%) = S/ {totalWithIgv.toFixed(2)} /mes</p>
                   <p className="text-slate-300 text-sm">Cobro mensual recurrente. Cancela cuando quieras.</p>
                 </div>
 
@@ -258,35 +288,32 @@ export default function Checkout() {
                   </div>
 
                   <div className="space-y-3 mb-8">
-                    {['Tarjeta de Crédito / Débito (Izipay)', 'Yape', 'Plin'].map(method => (
+                    {PAYMENT_METHODS.map(method => (
                       <label 
-                        key={method} 
-                        className={`flex items-center justify-between p-4 rounded-2xl border-2 cursor-pointer transition-all \${
-                          paymentMethod === method ? 'border-indigo-600 bg-indigo-50/50' : 'border-slate-200 hover:border-slate-300'
+                        key={method.id} 
+                        className={`flex items-center justify-between p-4 rounded-2xl border-2 cursor-pointer transition-all ${
+                          paymentMethod === method.label ? 'border-indigo-600 bg-indigo-50/50' : 'border-slate-200 hover:border-slate-300'
                         }`}
                       >
                         <div className="flex items-center gap-3">
                           <input 
                             type="radio" 
                             name="paymentMethod" 
-                            value={method} 
-                            checked={paymentMethod === method}
+                            value={method.label} 
+                            checked={paymentMethod === method.label}
                             onChange={(e) => setPaymentMethod(e.target.value)}
                             className="w-5 h-5 text-indigo-600 focus:ring-indigo-600 border-slate-300"
                           />
-                          <span className="font-bold text-slate-700">{method}</span>
+                          <span className="font-bold text-slate-700">{method.label}</span>
                         </div>
-                        {method.includes('Tarjeta') ? (
-                          <div className="flex items-center gap-1">
-                             <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/0/04/Visa.svg/1200px-Visa.svg.png" alt="Visa" className="h-4 object-contain" />
-                             <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/b/b7/MasterCard_Logo.svg/1200px-MasterCard_Logo.svg.png" alt="Mastercard" className="h-4 object-contain ml-1" />
-                          </div>
-                        ) : (
-                          <div className="w-8 h-8 bg-slate-100 rounded flex items-center justify-center text-xs font-bold text-slate-500">QR</div>
-                        )}
+                        <div className="w-8 h-8 bg-slate-100 rounded flex items-center justify-center text-xs font-bold text-slate-500">QR</div>
                       </label>
                     ))}
                   </div>
+
+                  <p className="text-xs text-slate-400 text-center mb-6">
+                    Próximamente: pago con tarjeta de crédito/débito vía Izipay.
+                  </p>
 
                   <button 
                     onClick={() => setStep('payment-details')}
@@ -319,101 +346,63 @@ export default function Checkout() {
                     <span className="inline-block px-3 py-1 bg-indigo-100 text-indigo-700 font-bold text-xs rounded-full mb-4 uppercase tracking-widest">
                       Plan {selectedPlan.name}
                     </span>
-                    <div className="text-sm font-bold text-slate-500 mb-1">Monto a pagar</div>
-                    <div className="text-4xl font-black text-slate-900">S/ {selectedPlan.price.toFixed(2)}</div>
+                    <div className="max-w-[240px] mx-auto text-sm">
+                      <div className="flex justify-between text-slate-500 mb-1">
+                        <span>Subtotal</span>
+                        <span>S/ {selectedPlan.price.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between text-slate-500 mb-3">
+                        <span>IGV (18%)</span>
+                        <span>S/ {igvAmount.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between items-baseline border-t border-slate-200 pt-3">
+                        <span className="text-sm font-bold text-slate-500">Total a pagar</span>
+                        <span className="text-3xl font-black text-slate-900">S/ {totalWithIgv.toFixed(2)}</span>
+                      </div>
+                    </div>
                   </div>
 
                   <div className="p-8">
-                    {paymentMethod.includes('Tarjeta') ? (
-                      <div className="max-w-md mx-auto text-left">
-                        <div className="mb-6 flex justify-between items-center">
-                           <p className="text-slate-600 font-medium">Ingresa los datos de tu tarjeta de crédito o débito.</p>
-                           <div className="flex gap-2">
-                             <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/0/04/Visa.svg/1200px-Visa.svg.png" alt="Visa" className="h-6" />
-                             <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/b/b7/MasterCard_Logo.svg/1200px-MasterCard_Logo.svg.png" alt="Mastercard" className="h-6" />
-                           </div>
-                        </div>
-                        
-                        <div className="space-y-4">
-                          <div>
-                            <label className="block text-sm font-bold text-slate-700 mb-1">Número de Tarjeta</label>
-                            <input type="text" placeholder="0000 0000 0000 0000" className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none" />
-                          </div>
-                          <div className="flex gap-4">
-                            <div className="w-1/2">
-                              <label className="block text-sm font-bold text-slate-700 mb-1">Vencimiento (MM/AA)</label>
-                              <input type="text" placeholder="MM/AA" className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none" />
+                    <>
+                      <div className="text-center mb-8">
+                        <p className="text-slate-600 font-medium mb-4">Escanea el código QR de <strong>{paymentMethod}</strong> para realizar el pago.</p>
+                        <div className="w-48 h-48 bg-white border-2 border-slate-200 rounded-2xl mx-auto flex items-center justify-center p-2 shadow-sm">
+                          {/* Simulación de QR */}
+                          <div className="w-full h-full bg-slate-900 rounded-xl flex items-center justify-center relative overflow-hidden">
+                            <div className="absolute inset-0 grid grid-cols-4 grid-rows-4 gap-1 p-2">
+                               {Array.from({length: 16}).map((_, i) => (
+                                 <div key={i} className={`bg-white rounded-sm ${i % 2 === 0 ? 'opacity-90' : 'opacity-40'}`}></div>
+                               ))}
                             </div>
-                            <div className="w-1/2">
-                              <label className="block text-sm font-bold text-slate-700 mb-1">CVC</label>
-                              <input type="text" placeholder="123" className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none" />
+                            <div className="w-12 h-12 bg-white relative z-10 rounded shadow-md flex items-center justify-center font-black text-slate-900 text-xs">
+                              {paymentMethod}
                             </div>
                           </div>
-                          <div>
-                            <label className="block text-sm font-bold text-slate-700 mb-1">Nombre en la tarjeta</label>
-                            <input type="text" placeholder="Juan Pérez" className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none" />
-                          </div>
-                          
-                          <div className="flex items-center gap-2 mt-4 text-xs text-slate-500 justify-center">
-                            <ShieldCheck className="w-4 h-4 text-emerald-500" />
-                            Pagos 100% seguros procesados por <span className="font-bold text-slate-700">Izipay</span>
-                          </div>
-                          
-                          <button 
-                            onClick={handlePaymentSubmit}
-                            disabled={isLoading}
-                            className="w-full mt-4 py-4 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl shadow-md transition-all flex justify-center items-center gap-2 disabled:opacity-70"
-                          >
-                            {isLoading ? (
-                              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                            ) : (
-                              'Pagar S/ ' + selectedPlan.price.toFixed(2)
-                            )}
-                          </button>
                         </div>
+                        <p className="text-sm text-slate-500 mt-4">A nombre de: {paymentSettings.companyName}<br/>Número: {paymentSettings.accountNumber}</p>
                       </div>
-                    ) : (
-                      <>
-                        <div className="text-center mb-8">
-                          <p className="text-slate-600 font-medium mb-4">Escanea el código QR de <strong>{paymentMethod}</strong> para realizar el pago.</p>
-                          <div className="w-48 h-48 bg-white border-2 border-slate-200 rounded-2xl mx-auto flex items-center justify-center p-2 shadow-sm">
-                            {/* Simulación de QR */}
-                            <div className="w-full h-full bg-slate-900 rounded-xl flex items-center justify-center relative overflow-hidden">
-                              <div className="absolute inset-0 grid grid-cols-4 grid-rows-4 gap-1 p-2">
-                                 {Array.from({length: 16}).map((_, i) => (
-                                   <div key={i} className={`bg-white rounded-sm \${i % 2 === 0 ? 'opacity-90' : 'opacity-40'}`}></div>
-                                 ))}
-                              </div>
-                              <div className="w-12 h-12 bg-white relative z-10 rounded shadow-md flex items-center justify-center font-black text-slate-900 text-xs">
-                                {paymentMethod}
-                              </div>
-                            </div>
-                          </div>
-                          <p className="text-sm text-slate-500 mt-4">A nombre de: {paymentSettings.companyName}<br/>Número: {paymentSettings.accountNumber}</p>
-                        </div>
 
-                        <div className="border-t border-slate-100 pt-8">
-                          <label className="block text-sm font-bold text-slate-700 mb-4 text-center">Sube tu comprobante de pago</label>
-                          <div className="border-2 border-dashed border-slate-300 rounded-2xl p-6 text-center hover:bg-slate-50 transition-colors cursor-pointer mb-6 relative group">
-                            <input type="file" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
-                            <Upload className="w-8 h-8 text-slate-400 mx-auto mb-2 group-hover:text-indigo-500 transition-colors" />
-                            <p className="text-sm font-medium text-slate-600">Haz clic para seleccionar archivo</p>
-                            <p className="text-xs text-slate-400 mt-1">PNG, JPG o PDF (Max. 5MB)</p>
-                          </div>
-                          <button 
-                            onClick={handlePaymentSubmit}
-                            disabled={isLoading}
-                            className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md transition-all flex justify-center items-center gap-2 disabled:opacity-70"
-                          >
-                            {isLoading ? (
-                              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                            ) : (
-                              'He realizado el pago'
-                            )}
-                          </button>
+                      <div className="border-t border-slate-100 pt-8">
+                        <label className="block text-sm font-bold text-slate-700 mb-4 text-center">Sube tu comprobante de pago</label>
+                        <div className="border-2 border-dashed border-slate-300 rounded-2xl p-6 text-center hover:bg-slate-50 transition-colors cursor-pointer mb-6 relative group">
+                          <input type="file" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                          <Upload className="w-8 h-8 text-slate-400 mx-auto mb-2 group-hover:text-indigo-500 transition-colors" />
+                          <p className="text-sm font-medium text-slate-600">Haz clic para seleccionar archivo</p>
+                          <p className="text-xs text-slate-400 mt-1">PNG, JPG o PDF (Max. 5MB)</p>
                         </div>
-                      </>
-                    )}
+                        <button 
+                          onClick={handlePaymentSubmit}
+                          disabled={isLoading}
+                          className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md transition-all flex justify-center items-center gap-2 disabled:opacity-70"
+                        >
+                          {isLoading ? (
+                            <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                          ) : (
+                            'He realizado el pago'
+                          )}
+                        </button>
+                      </div>
+                    </>
                   </div>
                 </div>
               </motion.div>
@@ -533,10 +522,7 @@ export default function Checkout() {
                 </div>
 
                 <p className="text-slate-600 mb-8 max-w-md mx-auto leading-relaxed">
-                  {paymentMethod.includes('Tarjeta') ? 
-                    <><strong className="text-slate-800 block mb-2">¡Pago procesado exitosamente por Izipay!</strong> Tu cuenta ha sido activada y el pago ha sido registrado. Puedes acceder a tu panel de control ahora mismo.</> : 
-                    <>Hemos recibido tu comprobante de pago. Nuestro equipo lo está verificando y <strong>activará tu cuenta en breve</strong>. Recibirás una notificación por correo y WhatsApp cuando esté listo.</>
-                  }
+                  Hemos recibido tu comprobante de pago. Nuestro equipo lo está verificando y <strong>activará tu cuenta en breve</strong>. Recibirás una notificación por correo y WhatsApp cuando esté listo.
                 </p>
 
                 <Link 
