@@ -200,16 +200,23 @@ export function PosSystem({ companyId, company }: PosSystemProps) {
 
   const handleAddCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = await apiClient.post("/api/customers", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...newCustomer, companyId: company.id, createdAt: new Date().toISOString() })
-    });
-    const saved = await res;
-    queryClient.invalidateQueries({ queryKey: ['customers'] });
-    setSelectedCustomer(saved);
-    setIsCustomerModalOpen(false);
-    setNewCustomer({});
+    if (!newCustomer.name?.trim()) {
+      alert('El nombre completo es obligatorio.');
+      return;
+    }
+    try {
+      const saved = await apiClient.post("/api/customers", {
+        ...newCustomer,
+        companyId: company.id,
+        createdAt: new Date().toISOString()
+      });
+      queryClient.invalidateQueries({ queryKey: ['customers'] });
+      setSelectedCustomer(saved);
+      setIsCustomerModalOpen(false);
+      setNewCustomer({});
+    } catch (err: any) {
+      alert(err.message || 'No se pudo guardar el cliente. Verifica los datos e inténtalo de nuevo.');
+    }
   };
 
   return (
