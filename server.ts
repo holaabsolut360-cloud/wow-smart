@@ -459,6 +459,8 @@ const toCustomer = (row: any) => row && ({
   name: row.name,
   phone: row.phone,
   email: row.email,
+  address: row.address,
+  documentNumber: row.document_number,
   notes: row.notes,
   createdAt: row.created_at,
 });
@@ -468,6 +470,8 @@ const fromCustomer = (customer: any) => ({
   name: customer.name,
   phone: customer.phone,
   email: customer.email,
+  address: customer.address,
+  document_number: customer.documentNumber,
   notes: customer.notes,
 });
 
@@ -1403,57 +1407,6 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
 
     await logSuperAdminAction("ELIMINAR_PROMOCION", "promotion", req.params.id, data?.code || null, null);
     res.json({ success: true });
-  });
-
-  // ==================== CONFIGURACIÓN DE PAGOS (Yape/Plin) ====================
-  app.get("/api/superadmin/settings/pagos", requireSuperAdmin, async (_req, res) => {
-    const defaults = { companyName: "WowSmart SAC", accountNumber: "999 888 777" };
-    if (!useSupabaseDb) return res.json(defaults);
-
-    const client = supabaseAdmin || supabase;
-    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
-
-    const { data, error } = await client
-      .from("platform_settings")
-      .select("value")
-      .eq("key", "payment_settings")
-      .maybeSingle();
-
-    if (error) return res.status(500).json({ error: error.message });
-    res.json(data?.value || defaults);
-  });
-
-  app.put("/api/superadmin/settings/pagos", requireSuperAdmin, async (req, res) => {
-    const { companyName, accountNumber } = req.body || {};
-    if (!companyName || !accountNumber) {
-      return res.status(400).json({ error: "companyName y accountNumber son requeridos" });
-    }
-    if (!useSupabaseDb) return res.status(503).json({ error: "Supabase is not configured" });
-
-    const client = supabaseAdmin || supabase;
-    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
-
-    const { data, error } = await client
-      .from("platform_settings")
-      .upsert({
-        key: "payment_settings",
-        value: { companyName, accountNumber },
-        updated_at: new Date().toISOString(),
-      })
-      .select("value")
-      .single();
-
-    if (error) return res.status(500).json({ error: error.message });
-
-    await logSuperAdminAction(
-      "ACTUALIZAR_CONFIG_PAGOS",
-      "platform_settings",
-      "payment_settings",
-      null,
-      `Datos de pago manual actualizados: ${companyName} / ${accountNumber}.`,
-    );
-
-    res.json(data.value);
   });
 
   // ==================== SOPORTE ====================
