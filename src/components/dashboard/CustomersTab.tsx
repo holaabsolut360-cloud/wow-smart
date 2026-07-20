@@ -80,6 +80,8 @@ export function CustomersTab({ company }: CustomersTabProps) {
                       Nombre: c.name,
                       Teléfono: c.phone || '',
                       Email: c.email || '',
+                      Dirección: c.address || '',
+                      'DNI/RUC': c.documentNumber || '',
                       Notas: c.notes || '',
                       Fecha_Registro: new Date(c.createdAt).toLocaleString()
                     }));
@@ -112,6 +114,15 @@ export function CustomersTab({ company }: CustomersTabProps) {
                     />
                   </div>
                   <div>
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Dirección (Opcional)</label>
+                    <input 
+                      type="text" 
+                      value={newCustomer.address || ''}
+                      onChange={e => setNewCustomer({...newCustomer, address: e.target.value})}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-slate-900 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none transition-all"
+                    />
+                  </div>
+                  <div>
                     <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Teléfono (WhatsApp)</label>
                     <input 
                       type="tel" 
@@ -126,6 +137,15 @@ export function CustomersTab({ company }: CustomersTabProps) {
                       type="email" 
                       value={newCustomer.email || ''}
                       onChange={e => setNewCustomer({...newCustomer, email: e.target.value})}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-slate-900 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none transition-all"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">DNI o RUC (Opcional)</label>
+                    <input 
+                      type="text" 
+                      value={newCustomer.documentNumber || ''}
+                      onChange={e => setNewCustomer({...newCustomer, documentNumber: e.target.value})}
                       className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-slate-900 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none transition-all"
                     />
                   </div>
@@ -172,6 +192,8 @@ export function CustomersTab({ company }: CustomersTabProps) {
                           <div className="font-bold text-slate-900">{c.name}</div>
                           <div className="text-slate-500 text-xs">{c.phone || 'Sin número'}</div>
                           {c.email && <div className="text-slate-400 text-xs">{c.email}</div>}
+                          {c.address && <div className="text-slate-400 text-xs">{c.address}</div>}
+                          {c.documentNumber && <div className="text-slate-400 text-xs">Doc: {c.documentNumber}</div>}
                           {c.notes && <div className="text-slate-400 text-xs italic">Nota: {c.notes}</div>}
                         </td>
                         <td className="px-6 py-4 text-center">
