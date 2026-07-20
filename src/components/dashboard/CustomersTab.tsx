@@ -39,9 +39,9 @@ export function CustomersTab({ company }: CustomersTabProps) {
   const addMutation = useMutation({
     mutationFn: async (customer: Partial<Customer>) => {
       const res = await apiClient.post("/api/customers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...customer, companyId: company?.id, createdAt: new Date().toISOString() })
+        ...customer,
+        companyId: company?.id,
+        createdAt: new Date().toISOString()
       });
       return res;
     },
@@ -49,12 +49,19 @@ export function CustomersTab({ company }: CustomersTabProps) {
       queryClient.invalidateQueries({ queryKey: ['customers', company?.id] });
       setIsAddingCustomer(false);
       setNewCustomer({});
+    },
+    onError: (err: any) => {
+      alert(err.message || 'No se pudo guardar el cliente. Verifica los datos e inténtalo de nuevo.');
     }
   });
 
   const handleAddCustomer = (e: React.FormEvent) => {
     e.preventDefault();
     if (!company) return;
+    if (!newCustomer.name?.trim()) {
+      alert('El nombre completo es obligatorio.');
+      return;
+    }
     addMutation.mutate(newCustomer);
   };
 
@@ -160,7 +167,9 @@ export function CustomersTab({ company }: CustomersTabProps) {
                   </div>
                   <div className="col-span-1 md:col-span-2 flex justify-end gap-3 mt-2 pt-4 border-t border-slate-100">
                     <button type="button" onClick={() => setIsAddingCustomer(false)} className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-bold hover:bg-slate-50 transition-colors">Cancelar</button>
-                    <button type="submit" className="px-5 py-2.5 rounded-xl bg-indigo-600 text-white font-bold hover:bg-indigo-700 transition-colors shadow-sm">Guardar Cliente</button>
+                    <button type="submit" disabled={addMutation.isPending} className="px-5 py-2.5 rounded-xl bg-indigo-600 text-white font-bold hover:bg-indigo-700 transition-colors shadow-sm disabled:opacity-60">
+                      {addMutation.isPending ? 'Guardando...' : 'Guardar Cliente'}
+                    </button>
                   </div>
                 </form>
               </motion.div>
