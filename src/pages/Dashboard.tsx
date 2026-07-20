@@ -108,13 +108,22 @@ export default function Dashboard() {
   
   
 
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!company) return;
-    const res = await apiClient.post(`/api/companies/${company.id}`, company);
-    const updated = await res;
-    setCompany(updated);
-    alert("Ajustes guardados");
+    if (!company || isSavingSettings) return;
+    setIsSavingSettings(true);
+    try {
+      const res = await apiClient.post(`/api/companies/${company.id}`, company);
+      const updated = await res;
+      setCompany(updated);
+      alert("Ajustes guardados");
+    } catch (err: any) {
+      alert(err.message || "No se pudieron guardar los cambios. Verifica tu conexión e inténtalo de nuevo.");
+    } finally {
+      setIsSavingSettings(false);
+    }
   };
 
   const [analytics, setAnalytics] = useState<any>({});
@@ -354,7 +363,7 @@ export default function Dashboard() {
         ) : activeTab === 'expenses' ? (
           <ExpensesTab company={company} />
         ) : activeTab === 'settings' ? (
-          <SettingsTab company={company} setCompany={setCompany as any} />
+          <SettingsTab company={company} setCompany={setCompany as any} onSave={handleSaveSettings} isSaving={isSavingSettings} />
                     ) : activeTab === 'crm' ? (
                   <CrmTab company={company} />
         ) : activeTab === 'debts' ? (
