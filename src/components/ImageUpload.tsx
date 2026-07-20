@@ -9,8 +9,57 @@ interface ImageUploadProps {
   aspectRatio?: 'square' | 'video' | 'auto';
 }
 
+// Redimensiona y comprime la imagen en el navegador antes de convertirla
+// a base64. Esto evita mandar fotos de varios MB al servidor (que hacían
+// lento el guardado) sin necesidad de tocar el backend ni la base de datos.
+const MAX_DIMENSION = 1200; // px, lado más largo
+const JPEG_QUALITY = 0.8;
+
+const resizeAndCompress = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+
+        if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+          if (width > height) {
+            height = Math.round((height * MAX_DIMENSION) / width);
+            width = MAX_DIMENSION;
+          } else {
+            width = Math.round((width * MAX_DIMENSION) / height);
+            height = MAX_DIMENSION;
+          }
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(e.target?.result as string); // fallback: sin comprimir
+          return;
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+
+        // PNG con transparencia se mantiene como PNG; el resto se comprime a JPEG.
+        const isPng = file.type === 'image/png';
+        const mime = isPng ? 'image/png' : 'image/jpeg';
+        const dataUrl = canvas.toDataURL(mime, isPng ? undefined : JPEG_QUALITY);
+        resolve(dataUrl);
+      };
+      img.onerror = () => reject(new Error('No se pudo procesar la imagen'));
+      img.src = e.target?.result as string;
+    };
+    reader.onerror = () => reject(new Error('No se pudo leer el archivo'));
+    reader.readAsDataURL(file);
+  });
+};
+
 export function ImageUpload({ value, onChange, label, hint, aspectRatio = 'auto' }: ImageUploadProps) {
   const [isDragging, setIsDragging] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -22,18 +71,20 @@ export function ImageUpload({ value, onChange, label, hint, aspectRatio = 'auto'
     }
   }, []);
 
-  const processFile = (file: File) => {
+  const processFile = async (file: File) => {
     if (!file.type.startsWith('image/')) {
       alert('Por favor, selecciona una imagen válida.');
       return;
     }
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      if (e.target?.result) {
-        onChange(e.target.result as string);
-      }
-    };
-    reader.readAsDataURL(file);
+    setIsProcessing(true);
+    try {
+      const compressed = await resizeAndCompress(file);
+      onChange(compressed);
+    } catch (err) {
+      alert('No se pudo procesar la imagen. Intenta con otro archivo.');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -82,13 +133,22 @@ export function ImageUpload({ value, onChange, label, hint, aspectRatio = 'auto'
           } ${aspectClass}`}
         >
           <div className="flex flex-col items-center justify-center text-slate-500">
-            <Upload className={`w-8 h-8 mb-3 ${isDragging ? 'text-indigo-500' : 'text-slate-400'}`} />
-            <p className="mb-1 text-sm font-semibold text-center">
-              <span className="text-indigo-600">Haz clic para subir</span> o arrastra y suelta
-            </p>
-            <p className="text-xs text-slate-400 text-center">PNG, JPG o WEBP</p>
+            {isProcessing ? (
+              <>
+                <div className="w-8 h-8 mb-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+                <p className="text-sm font-semibold text-center text-slate-500">Procesando imagen...</p>
+              </>
+            ) : (
+              <>
+                <Upload className={`w-8 h-8 mb-3 ${isDragging ? 'text-indigo-500' : 'text-slate-400'}`} />
+                <p className="mb-1 text-sm font-semibold text-center">
+                  <span className="text-indigo-600">Haz clic para subir</span> o arrastra y suelta
+                </p>
+                <p className="text-xs text-slate-400 text-center">PNG, JPG o WEBP</p>
+              </>
+            )}
           </div>
-          <input type="file" className="hidden" accept="image/*" onChange={handleChange} />
+          <input type="file" className="hidden" accept="image/*" onChange={handleChange} disabled={isProcessing} />
         </label>
       )}
     </div>
