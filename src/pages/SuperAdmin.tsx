@@ -46,9 +46,16 @@ export default function SuperAdmin() {
   const [pagosLoading, setPagosLoading] = useState(false);
   const [pagosError, setPagosError] = useState('');
 
-  const [paymentSettings, setPaymentSettings] = useState(() => {
-    return JSON.parse(localStorage.getItem('paymentSettings') || '{"companyName": "WowSmart SAC", "accountNumber": "999 888 777"}');
-  });
+  const [paymentSettings, setPaymentSettings] = useState({ companyName: 'WowSmart SAC', accountNumber: '999 888 777' });
+  const [paymentSettingsLoading, setPaymentSettingsLoading] = useState(false);
+
+  const fetchPaymentSettings = async () => {
+    try {
+      const res = await fetch('/api/superadmin/settings/pagos');
+      if (!res.ok) return;
+      setPaymentSettings(await res.json());
+    } catch {}
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -70,10 +77,25 @@ export default function SuperAdmin() {
     };
   }, []);
   
-  const handleSavePaymentSettings = (e: React.FormEvent) => {
+  const handleSavePaymentSettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    localStorage.setItem('paymentSettings', JSON.stringify(paymentSettings));
-    alert('Configuración de pagos guardada exitosamente');
+    setPaymentSettingsLoading(true);
+    try {
+      const res = await fetch('/api/superadmin/settings/pagos', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(paymentSettings),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || 'No se pudo guardar la configuración');
+      }
+      alert('Configuración de pagos guardada exitosamente');
+    } catch (err: any) {
+      alert(err.message || 'Error al guardar la configuración de pagos');
+    } finally {
+      setPaymentSettingsLoading(false);
+    }
   };
 
 
@@ -504,6 +526,7 @@ export default function SuperAdmin() {
       fetchReportes();
       fetchCrmLeads();
       fetchReclamos();
+      fetchPaymentSettings();
     }
   }, [isAuthenticated]);
 
@@ -1071,9 +1094,10 @@ export default function SuperAdmin() {
                     
                     <button 
                       type="submit"
-                      className="py-3 px-6 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-sm"
+                      disabled={paymentSettingsLoading}
+                      className="py-3 px-6 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-sm disabled:opacity-70 disabled:cursor-not-allowed"
                     >
-                      Guardar Cambios
+                      {paymentSettingsLoading ? 'Guardando...' : 'Guardar Cambios'}
                     </button>
                   </form>
                 </div>
