@@ -78,6 +78,7 @@ export default function Catalog() {
   const [couponCode, setCouponCode] = useState("");
   const [appliedCoupon, setAppliedCoupon] = useState<any>(null);
   const [couponError, setCouponError] = useState("");
+  const [paymentQrModal, setPaymentQrModal] = useState<'yape' | 'plin' | null>(null);
 
   const isServiceBusiness = company?.businessType === 'Estudio de Abogados' || company?.businessType === 'Servicios Profesionales' || company?.businessType === 'Agencia de Publicidad' || company?.businessType === 'Imprenta';
   const termProduct = isServiceBusiness ? 'Servicios' : 'Productos';
@@ -245,6 +246,8 @@ export default function Catalog() {
     setCart(prev => prev.filter((_, i) => i !== idx));
   };
 
+  const TAX_RATE = 0.18; // IGV Perú
+
   const subtotal = cart.reduce((acc, item) => acc + (item.product.salePrice || item.product.price) * item.qty, 0);
   let discount = 0;
   if (appliedCoupon) {
@@ -254,7 +257,9 @@ export default function Catalog() {
       discount = appliedCoupon.discountValue;
     }
   }
-  const cartTotal = Math.max(0, subtotal - discount);
+  const netAfterDiscount = Math.max(0, subtotal - discount);
+  const taxAmount = netAfterDiscount * TAX_RATE;
+  const cartTotal = netAfterDiscount + taxAmount;
 
   const applyCoupon = () => {
     setCouponError("");
@@ -292,6 +297,7 @@ export default function Catalog() {
     if (appliedCoupon) {
       msg += `*Descuento (${appliedCoupon.code}): -${company.currency || 'S/'} ${discount.toFixed(2)}*\n`;
     }
+    msg += `*IGV (18%): ${company.currency || 'S/'} ${taxAmount.toFixed(2)}*\n`;
     msg += `*TOTAL (${termProduct}): ${company.currency || 'S/'} ${cartTotal.toFixed(2)}*\n\n`;
     
     msg += `*Cliente:* ${deliveryData.recipient} (${deliveryData.phone})\n`;
@@ -319,6 +325,7 @@ export default function Catalog() {
       total: cartTotal,
       subtotal,
       discount,
+      tax: taxAmount,
       couponCode: appliedCoupon?.code,
     };
     try {
@@ -733,6 +740,10 @@ export default function Catalog() {
                     <span className="font-bold text-emerald-600 text-sm">-{company.currency || 'S/'} {discount.toFixed(2)}</span>
                   </div>
                 )}
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-slate-500 font-medium text-sm">IGV (18%)</span>
+                  <span className="font-bold text-slate-600 text-sm">{company.currency || 'S/'} {taxAmount.toFixed(2)}</span>
+                </div>
                 <div className="flex justify-between items-center mb-6 pt-2">
                   <span className="text-slate-900 font-bold text-lg">Total</span>
                   <span className="text-2xl font-bold text-slate-900">{company.currency || 'S/'} {cartTotal.toFixed(2)}</span>
@@ -915,11 +926,14 @@ export default function Catalog() {
                         }
                       }
                       const price = selectedProduct.salePrice || selectedProduct.price;
+                      const quickSubtotal = price * qty;
+                      const quickTax = quickSubtotal * TAX_RATE;
+                      const quickTotal = quickSubtotal + quickTax;
                       const variantStr = Object.keys(selectedVariants).length > 0 
                         ? ` (${Object.values(selectedVariants).join(', ')})` 
                         : '';
                       const headerTitle = isServiceBusiness ? '*NUEVA SOLICITUD RÁPIDA*' : '*COMPRA RÁPIDA*';
-                      const msg = `${headerTitle}\n\n${termProduct.slice(0, -1)}: ${selectedProduct.name}${variantStr}\nCantidad: ${qty}\nSubtotal: ${company.currency || 'S/'} ${(price * qty).toFixed(2)}`;
+                      const msg = `${headerTitle}\n\n${termProduct.slice(0, -1)}: ${selectedProduct.name}${variantStr}\nCantidad: ${qty}\nSubtotal: ${company.currency || 'S/'} ${quickSubtotal.toFixed(2)}\nIGV (18%): ${company.currency || 'S/'} ${quickTax.toFixed(2)}\nTotal: ${company.currency || 'S/'} ${quickTotal.toFixed(2)}`;
                       window.open(`https://wa.me/${company.whatsapp}?text=${encodeURIComponent(msg)}`, "_blank");
                     }}
                     disabled={!storeOpenStatus.isOpen}
@@ -933,12 +947,12 @@ export default function Catalog() {
                 {(company.yapeNumber || company.plinNumber) && (
                   <div className="grid grid-cols-2 gap-2 mt-2">
                     {company.yapeNumber && (
-                      <button className="py-2.5 rounded-xl border border-[#7400b8]/30 bg-[#7400b8]/5 text-[#7400b8] font-bold text-sm hover:bg-[#7400b8]/10 transition-colors">
+                      <button onClick={() => setPaymentQrModal('yape')} className="py-2.5 rounded-xl border border-[#7400b8]/30 bg-[#7400b8]/5 text-[#7400b8] font-bold text-sm hover:bg-[#7400b8]/10 transition-colors">
                         Pagar con Yape
                       </button>
                     )}
                     {company.plinNumber && (
-                      <button className="py-2.5 rounded-xl border border-teal-200 bg-teal-50 text-teal-700 font-bold text-sm hover:bg-teal-100 transition-colors">
+                      <button onClick={() => setPaymentQrModal('plin')} className="py-2.5 rounded-xl border border-teal-200 bg-teal-50 text-teal-700 font-bold text-sm hover:bg-teal-100 transition-colors">
                         Pagar con Plin
                       </button>
                     )}
@@ -978,6 +992,58 @@ export default function Catalog() {
                 NOTA: BRINDAMOS FACTURA Y ENVÍO A NIVEL NACIONAL
               </div>
             </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Modal Pagar con Yape / Plin */}
+      {paymentQrModal && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-sm" onClick={() => setPaymentQrModal(null)}></div>
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            className="relative z-10 w-full max-w-sm bg-white rounded-2xl shadow-2xl p-6 text-center"
+          >
+            <button
+              onClick={() => setPaymentQrModal(null)}
+              className="absolute top-4 right-4 w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-slate-200 transition-all"
+            >
+              &#10005;
+            </button>
+
+            <h3 className={`text-lg font-extrabold mb-1 ${paymentQrModal === 'yape' ? 'text-[#7400b8]' : 'text-teal-700'}`}>
+              Paga con {paymentQrModal === 'yape' ? 'Yape' : 'Plin'}
+            </h3>
+            <p className="text-slate-500 text-sm mb-5">
+              Escanea el código QR o transfiere directamente al número indicado.
+              {selectedProduct && (
+                <> Total a pagar (con IGV incluido): <strong>{company.currency || 'S/'} {((selectedProduct.salePrice || selectedProduct.price) * qty * (1 + TAX_RATE)).toFixed(2)}</strong></>
+              )}
+            </p>
+
+            {(paymentQrModal === 'yape' ? company.yapeQr : company.plinQr) ? (
+              <img
+                src={paymentQrModal === 'yape' ? company.yapeQr : company.plinQr}
+                alt={`QR ${paymentQrModal === 'yape' ? 'Yape' : 'Plin'}`}
+                className="w-56 h-56 object-contain mx-auto mb-5 border border-slate-200 rounded-xl p-2"
+              />
+            ) : (
+              <div className="w-56 h-56 mx-auto mb-5 border border-dashed border-slate-300 rounded-xl flex items-center justify-center text-slate-400 text-sm px-4">
+                Este negocio aún no subió su QR de {paymentQrModal === 'yape' ? 'Yape' : 'Plin'}
+              </div>
+            )}
+
+            <div className="bg-slate-50 border border-slate-200 rounded-xl py-3 px-4 mb-5">
+              <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Número {paymentQrModal === 'yape' ? 'Yape' : 'Plin'}</div>
+              <div className="text-2xl font-black text-slate-900 tracking-wide">
+                {paymentQrModal === 'yape' ? company.yapeNumber : company.plinNumber}
+              </div>
+            </div>
+
+            <p className="text-slate-400 text-xs">
+              Una vez realizado el pago, envía tu comprobante por WhatsApp para confirmar tu {isServiceBusiness ? 'solicitud' : 'pedido'}.
+            </p>
           </motion.div>
         </div>
       )}
