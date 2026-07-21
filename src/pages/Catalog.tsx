@@ -8,6 +8,7 @@ import { Search, ShoppingCart, Info, Share2, Plus, Minus, Trash2, Instagram, Fac
 import { Company, Product } from "../types";
 import { apiClient } from "../services/api";
 import { resolveCatalogTaxRate, taxLabel } from "../utils/pricingCalculator";
+import { ImageUpload } from "../components/ImageUpload";
 
 export default function Catalog() {
   const { slug } = useParams();
@@ -75,6 +76,8 @@ export default function Catalog() {
   // Delivery & Coupons
   const [deliveryMethod, setDeliveryMethod] = useState<'delivery' | 'pickup'>('delivery');
   const [deliveryData, setDeliveryData] = useState({ address: '', reference: '', recipient: '', phone: '' });
+  const [cartPaymentMethod, setCartPaymentMethod] = useState<'Efectivo' | 'Yape' | 'Plin'>('Efectivo');
+  const [cartPaymentProof, setCartPaymentProof] = useState('');
   const [couponCode, setCouponCode] = useState("");
   const [appliedCoupon, setAppliedCoupon] = useState<any>(null);
   const [couponError, setCouponError] = useState("");
@@ -306,6 +309,12 @@ export default function Catalog() {
       msg += `Dirección: ${deliveryData.address}\n`;
       if (deliveryData.reference) msg += `Referencia: ${deliveryData.reference}\n`;
     }
+    msg += `*Método de Pago:* ${cartPaymentMethod}\n`;
+    if (cartPaymentMethod !== 'Efectivo') {
+      msg += cartPaymentProof
+        ? `✅ Comprobante de pago adjuntado, revisar pedido en el panel.\n`
+        : `⚠️ Aún no envió el comprobante de pago, por favor solicitarlo.\n`;
+    }
 
     // Save order in backend
     const orderData = {
@@ -327,6 +336,8 @@ export default function Catalog() {
       discount,
       tax: taxAmount,
       couponCode: appliedCoupon?.code,
+      paymentMethod: cartPaymentMethod,
+      paymentProof: cartPaymentProof || undefined,
     };
     try {
       await apiClient.post('/api/orders', orderData);
@@ -695,6 +706,69 @@ export default function Catalog() {
                         onChange={e => setDeliveryData({...deliveryData, reference: e.target.value})}
                         className="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 text-sm outline-none focus:border-indigo-500 transition-colors"
                       />
+                    </div>
+                  )}
+
+                  {(company.yapeNumber || company.plinNumber) && (
+                    <div className="pt-4 mt-2 border-t border-slate-100">
+                      <h4 className="font-bold text-slate-800 text-sm mb-3">Método de pago</h4>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setCartPaymentMethod('Efectivo')}
+                          className={`flex-1 py-2 rounded-xl border text-xs font-bold transition-all ${cartPaymentMethod === 'Efectivo' ? 'border-transparent text-white' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}
+                          style={cartPaymentMethod === 'Efectivo' ? { backgroundColor: company.color } : {}}
+                        >
+                          Efectivo
+                        </button>
+                        {company.yapeNumber && (
+                          <button
+                            onClick={() => setCartPaymentMethod('Yape')}
+                            className={`flex-1 py-2 rounded-xl border text-xs font-bold transition-all ${cartPaymentMethod === 'Yape' ? 'border-transparent text-white bg-[#7400b8]' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}
+                          >
+                            Yape
+                          </button>
+                        )}
+                        {company.plinNumber && (
+                          <button
+                            onClick={() => setCartPaymentMethod('Plin')}
+                            className={`flex-1 py-2 rounded-xl border text-xs font-bold transition-all ${cartPaymentMethod === 'Plin' ? 'border-transparent text-white bg-teal-600' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}
+                          >
+                            Plin
+                          </button>
+                        )}
+                      </div>
+
+                      {cartPaymentMethod !== 'Efectivo' && (
+                        <div className="mt-4 bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-4">
+                          <div className="flex items-center gap-4">
+                            {(cartPaymentMethod === 'Yape' ? company.yapeQr : company.plinQr) ? (
+                              <img
+                                src={cartPaymentMethod === 'Yape' ? company.yapeQr : company.plinQr}
+                                alt={`QR ${cartPaymentMethod}`}
+                                className="w-20 h-20 object-contain rounded-lg border border-slate-200 bg-white p-1 flex-shrink-0"
+                              />
+                            ) : (
+                              <div className="w-20 h-20 flex-shrink-0 rounded-lg border border-dashed border-slate-300 flex items-center justify-center text-[10px] text-slate-400 text-center px-1">
+                                Sin QR
+                              </div>
+                            )}
+                            <div>
+                              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Número {cartPaymentMethod}</div>
+                              <div className="text-lg font-black text-slate-900">
+                                {cartPaymentMethod === 'Yape' ? company.yapeNumber : company.plinNumber}
+                              </div>
+                            </div>
+                          </div>
+
+                          <ImageUpload
+                            label="Adjuntar comprobante (opcional, agiliza tu pedido)"
+                            hint="Si lo adjuntas ahora, no tendrás que enviarlo por WhatsApp después."
+                            value={cartPaymentProof}
+                            onChange={setCartPaymentProof}
+                            aspectRatio="square"
+                          />
+                        </div>
+                      )}
                     </div>
                   )}
 
