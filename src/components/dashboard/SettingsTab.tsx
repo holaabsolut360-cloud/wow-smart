@@ -7,11 +7,9 @@ import { Company } from '../../types';
 interface SettingsTabProps {
   company: Company | null;
   setCompany: React.Dispatch<React.SetStateAction<Company | null>>;
-  onSave: (e: React.FormEvent) => void;
-  isSaving?: boolean;
 }
 
-export function SettingsTab({ company, setCompany, onSave, isSaving }: SettingsTabProps) {
+export function SettingsTab({ company, setCompany }: SettingsTabProps) {
   return (
               <div id="settings" className="max-w-3xl">
             <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight mb-2">Mi Empresa</h2>
@@ -23,7 +21,7 @@ export function SettingsTab({ company, setCompany, onSave, isSaving }: SettingsT
                   value={`${window.location.origin}/c/${company?.slug}`} 
                   size={120}
                   level={"H"}
-                  includeMargin={false}
+                  includeMargin={true}
                   fgColor={company?.color || "#4f46e5"}
                 />
               </div>
@@ -74,7 +72,7 @@ export function SettingsTab({ company, setCompany, onSave, isSaving }: SettingsT
               </div>
             </div>
 
-            <form onSubmit={onSave} className="p-8 rounded-2xl bg-white border border-slate-200 shadow-sm">
+            <form onSubmit={() => {}} className="p-8 rounded-2xl bg-white border border-slate-200 shadow-sm">
             <div className="grid grid-cols-2 gap-6">
               <div className="col-span-2">
                 <ImageUpload 
@@ -522,9 +520,7 @@ export function SettingsTab({ company, setCompany, onSave, isSaving }: SettingsT
 
             </div>
             <div className="mt-8 pt-6 border-t border-slate-200 flex gap-4">
-              <button type="submit" disabled={isSaving} className="flex-1 py-3 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition-colors shadow-sm disabled:opacity-60">
-                {isSaving ? 'Guardando...' : 'Guardar cambios'}
-              </button>
+              <button type="submit" className="flex-1 py-3 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition-colors shadow-sm">Guardar cambios</button>
             </div>
           </form>
 
