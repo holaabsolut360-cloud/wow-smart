@@ -492,6 +492,7 @@ const toOrder = (row: any) => row && ({
   status: row.status,
   type: row.type,
   paymentMethod: row.payment_method,
+  paymentProof: row.payment_proof,
   amountPaid: Number(row.amount_paid || 0),
   sellerName: row.seller_name,
   notes: row.notes,
@@ -511,9 +512,10 @@ const fromOrder = (order: any) => ({
   tax: order.tax || 0,
   total: order.total || 0,
   coupon_code: order.couponCode,
-  status: order.status || 'Pendiente',
+  status: order.status || (order.paymentProof ? 'Pago por Verificar' : 'Pendiente'),
   type: order.type || 'online',
   payment_method: order.paymentMethod,
+  payment_proof: order.paymentProof,
   amount_paid: order.amountPaid || 0,
   seller_name: order.sellerName,
   notes: order.notes,
@@ -2250,7 +2252,7 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     const newOrder = {
       id: Date.now().toString(),
       createdAt: new Date().toISOString(),
-      status: req.body.status || 'Pendiente',
+      status: req.body.status || (req.body.paymentProof ? 'Pago por Verificar' : 'Pendiente'),
       ...req.body
     };
     
