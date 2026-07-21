@@ -207,14 +207,14 @@ export function CustomersTab({ company }: CustomersTabProps) {
                         </td>
                         <td className="px-6 py-4 text-center">
                           <span className="inline-flex items-center justify-center bg-indigo-50 text-indigo-700 font-bold px-2.5 py-1 rounded-full text-xs">
-                            {c.ordersCount}
+                            {c.ordersCount ?? 0}
                           </span>
                         </td>
                         <td className="px-6 py-4 text-right font-medium text-slate-900">
-                          {company?.currency || 'S/'} {c.totalSpent.toFixed(2)}
+                          {company?.currency || 'S/'} {(c.totalSpent ?? 0).toFixed(2)}
                         </td>
                         <td className="px-6 py-4 text-slate-500 text-xs">
-                          {new Date(c.lastOrder).toLocaleDateString()}
+                          {c.lastOrder ? new Date(c.lastOrder).toLocaleDateString() : new Date(c.createdAt).toLocaleDateString()}
                         </td>
                         <td className="px-6 py-4">
                           {c.phone && (
