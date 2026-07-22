@@ -475,6 +475,180 @@ const fromCustomer = (customer: any) => ({
   notes: customer.notes,
 });
 
+const toExpense = (row: any) => row && ({
+  id: row.id,
+  companyId: row.company_id,
+  concept: row.concept,
+  amount: Number(row.amount || 0),
+  date: row.date,
+  createdAt: row.created_at,
+});
+
+const fromExpense = (expense: any) => ({
+  company_id: expense.companyId,
+  concept: expense.concept,
+  amount: expense.amount,
+  date: expense.date,
+});
+
+const toCRMDeal = (row: any) => row && ({
+  id: row.id,
+  companyId: row.company_id,
+  customerId: row.customer_id,
+  customerName: row.customer_name,
+  customerPhone: row.customer_phone,
+  customerEmail: row.customer_email,
+  title: row.title,
+  value: Number(row.value || 0),
+  stage: row.stage,
+  notes: row.notes,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
+
+const fromCRMDeal = (deal: any) => ({
+  company_id: deal.companyId,
+  customer_id: deal.customerId,
+  customer_name: deal.customerName,
+  customer_phone: deal.customerPhone,
+  customer_email: deal.customerEmail,
+  title: deal.title,
+  value: deal.value,
+  stage: deal.stage,
+  notes: deal.notes,
+});
+
+const toDebt = (row: any) => row && ({
+  id: row.id,
+  companyId: row.company_id,
+  customerId: row.customer_id,
+  amount: Number(row.amount || 0),
+  remainingAmount: Number(row.remaining_amount || 0),
+  reason: row.reason,
+  dueDate: row.due_date,
+  status: row.status,
+  createdAt: row.created_at,
+});
+
+const fromDebt = (debt: any) => ({
+  company_id: debt.companyId,
+  customer_id: debt.customerId,
+  amount: debt.amount,
+  remaining_amount: debt.remainingAmount ?? debt.amount,
+  reason: debt.reason,
+  due_date: debt.dueDate,
+  status: debt.status || 'Pendiente',
+});
+
+const toDebtPayment = (row: any) => row && ({
+  id: row.id,
+  debtId: row.debt_id,
+  amount: Number(row.amount || 0),
+  date: row.date,
+});
+
+const fromDebtPayment = (payment: any) => ({
+  debt_id: payment.debtId,
+  amount: payment.amount,
+  date: payment.date,
+  method: payment.method || 'Efectivo',
+});
+
+const toIngredient = (row: any) => row && ({
+  id: row.id,
+  companyId: row.company_id,
+  name: row.name,
+  unit: row.unit,
+  stock: Number(row.stock || 0),
+  cost: Number(row.cost || 0),
+});
+
+const fromIngredient = (ingredient: any) => ({
+  company_id: ingredient.companyId,
+  name: ingredient.name,
+  unit: ingredient.unit,
+  stock: ingredient.stock,
+  cost: ingredient.cost,
+});
+
+const toInventoryMovement = (row: any) => row && ({
+  id: row.id,
+  companyId: row.company_id,
+  productId: row.product_id,
+  type: row.type,
+  qty: Number(row.qty || 0),
+  reason: row.reason,
+  date: row.date,
+});
+
+const fromInventoryMovement = (movement: any) => ({
+  company_id: movement.companyId,
+  product_id: movement.productId,
+  type: movement.type,
+  qty: movement.qty,
+  reason: movement.reason,
+  date: movement.date || new Date().toISOString().split('T')[0],
+});
+
+const toSupplier = (row: any) => row && ({
+  id: row.id,
+  companyId: row.company_id,
+  name: row.name,
+  contact: row.contact,
+  phone: row.phone,
+  email: row.email,
+  address: row.address,
+});
+
+const fromSupplier = (supplier: any) => ({
+  company_id: supplier.companyId,
+  name: supplier.name,
+  contact: supplier.contact,
+  phone: supplier.phone,
+  email: supplier.email,
+  address: supplier.address,
+});
+
+const toPurchaseOrder = (row: any) => row && ({
+  id: row.id,
+  companyId: row.company_id,
+  supplierId: row.supplier_id,
+  items: row.items || [],
+  total: Number(row.total || 0),
+  status: row.status,
+  expectedDate: row.expected_date,
+  createdAt: row.created_at,
+});
+
+const fromPurchaseOrder = (po: any) => ({
+  company_id: po.companyId,
+  supplier_id: po.supplierId,
+  items: po.items || [],
+  total: po.total || 0,
+  status: po.status || 'Borrador',
+  expected_date: po.expectedDate,
+});
+
+const toBatch = (row: any) => row && ({
+  id: row.id,
+  companyId: row.company_id,
+  productId: row.product_id,
+  ingredientId: row.ingredient_id,
+  batchNumber: row.batch_number,
+  qty: Number(row.qty || 0),
+  expirationDate: row.expiration_date,
+  createdAt: row.created_at,
+});
+
+const fromBatch = (batch: any) => ({
+  company_id: batch.companyId,
+  product_id: batch.productId,
+  ingredient_id: batch.ingredientId,
+  batch_number: batch.batchNumber,
+  qty: batch.qty,
+  expiration_date: batch.expirationDate,
+});
+
 const toOrder = (row: any) => row && ({
   id: row.id,
   companyId: row.company_id,
@@ -2136,51 +2310,128 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
       totalPages: Math.ceil(filtered.length / limit)
     });
 
-  app.get("/api/expenses", (req, res) => {
+  app.get("/api/expenses", async (req, res) => {
     const companyId = (req.query as any).companyId;
     if (!companyId) return res.status(400).json({ error: "companyId required" });
+
+    if (useSupabaseDb) {
+      const client = getRequestSupabase(req);
+      if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+      const { data, error } = await client
+        .from("expenses")
+        .select("*")
+        .eq("company_id", companyId)
+        .order("date", { ascending: false });
+
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json({ data: (data || []).map(toExpense) });
+    }
+
     const result = db.expenses.filter(e => e.companyId === companyId).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     res.json({ data: result });
   });
 
-  app.get("/api/crm-deals", (req, res) => {
+  app.get("/api/crm-deals", async (req, res) => {
     const companyId = (req.query as any).companyId;
     if (!companyId) return res.status(400).json({ error: "companyId required" });
+
+    if (useSupabaseDb) {
+      const client = getRequestSupabase(req);
+      if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+      const { data, error } = await client.from("crm_deals").select("*").eq("company_id", companyId).order("created_at", { ascending: false });
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json({ data: (data || []).map(toCRMDeal) });
+    }
+
     const result = db.crmDeals.filter(d => d.companyId === companyId);
     res.json({ data: result });
   });
 
-  app.get("/api/debts", (req, res) => {
+  app.get("/api/debts", async (req, res) => {
     const companyId = (req.query as any).companyId;
     if (!companyId) return res.status(400).json({ error: "companyId required" });
+
+    if (useSupabaseDb) {
+      const client = getRequestSupabase(req);
+      if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+      const { data, error } = await client.from("debts").select("*").eq("company_id", companyId).order("created_at", { ascending: false });
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json({ data: (data || []).map(toDebt) });
+    }
+
     const result = db.debts.filter(d => d.companyId === companyId);
     res.json({ data: result });
   });
 
-  app.get("/api/debt-payments", (req, res) => {
+  app.get("/api/debt-payments", async (req, res) => {
     const companyId = (req.query as any).companyId;
     if (!companyId) return res.status(400).json({ error: "companyId required" });
+
+    if (useSupabaseDb) {
+      const client = getRequestSupabase(req);
+      if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+      const { data: debtRows, error: debtError } = await client.from("debts").select("id").eq("company_id", companyId);
+      if (debtError) return res.status(500).json({ error: debtError.message });
+      const debtIds = (debtRows || []).map((d: any) => d.id);
+      if (debtIds.length === 0) return res.json({ data: [] });
+      const { data, error } = await client.from("debt_payments").select("*").in("debt_id", debtIds).order("date", { ascending: false });
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json({ data: (data || []).map(toDebtPayment) });
+    }
+
     const result = db.debtPayments.filter(p => p.companyId === companyId);
     res.json({ data: result });
   });
 
-  app.get("/api/ingredients", (req, res) => {
+  app.get("/api/ingredients", async (req, res) => {
     const companyId = (req.query as any).companyId;
     if (!companyId) return res.status(400).json({ error: "companyId required" });
+
+    if (useSupabaseDb) {
+      const client = getRequestSupabase(req);
+      if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+      const { data, error } = await client.from("ingredients").select("*").eq("company_id", companyId).order("name", { ascending: true });
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json({ data: (data || []).map(toIngredient) });
+    }
+
     const result = db.ingredients.filter(i => i.companyId === companyId);
     res.json({ data: result });
   });
 
-  app.get("/api/inventory-movements", (req, res) => {
+  app.get("/api/inventory-movements", async (req, res) => {
     const companyId = (req.query as any).companyId;
     if (!companyId) return res.status(400).json({ error: "companyId required" });
+
+    if (useSupabaseDb) {
+      const client = getRequestSupabase(req);
+      if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+      const { data, error } = await client.from("inventory_movements").select("*").eq("company_id", companyId).order("date", { ascending: false });
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json({ data: (data || []).map(toInventoryMovement) });
+    }
+
     const result = db.inventoryMovements.filter(m => m.companyId === companyId).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     res.json({ data: result });
   });
 
-  app.get("/api/inventory-analytics", (req, res) => {
+  app.get("/api/inventory-analytics", async (req, res) => {
     const companyId = (req.query as any).companyId;
     if (!companyId) return res.status(400).json({ error: "companyId required" });
+
+    if (useSupabaseDb) {
+      const client = getRequestSupabase(req);
+      if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+      const { data, error } = await client.from("products").select("stock, min_stock, price").eq("company_id", companyId);
+      if (error) return res.status(500).json({ error: error.message });
+      const products = data || [];
+      const totalItems = products.length;
+      const lowStock = products.filter((p: any) => typeof p.stock === 'number' && typeof p.min_stock === 'number' && p.stock <= p.min_stock).length;
+      const totalValue = products.reduce((sum: number, p: any) => sum + (Number(p.price || 0) * (p.stock || 0)), 0);
+      return res.json({ data: { totalItems, lowStock, totalValue } });
+    }
+
     const companyProducts = db.products.filter(p => p.companyId === companyId);
     const totalItems = companyProducts.length;
     const lowStock = companyProducts.filter(p => typeof p.stock === 'number' && typeof p.minStock === 'number' && p.stock <= p.minStock).length;
@@ -2188,16 +2439,34 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     res.json({ data: { totalItems, lowStock, totalValue } });
   });
 
-  app.get("/api/suppliers", (req, res) => {
+  app.get("/api/suppliers", async (req, res) => {
     const companyId = (req.query as any).companyId;
     if (!companyId) return res.status(400).json({ error: "companyId required" });
+
+    if (useSupabaseDb) {
+      const client = getRequestSupabase(req);
+      if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+      const { data, error } = await client.from("suppliers").select("*").eq("company_id", companyId).order("name", { ascending: true });
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json({ data: (data || []).map(toSupplier) });
+    }
+
     const result = db.suppliers.filter(s => s.companyId === companyId);
     res.json({ data: result });
   });
 
-  app.get("/api/purchase-orders", (req, res) => {
+  app.get("/api/purchase-orders", async (req, res) => {
     const companyId = (req.query as any).companyId;
     if (!companyId) return res.status(400).json({ error: "companyId required" });
+
+    if (useSupabaseDb) {
+      const client = getRequestSupabase(req);
+      if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+      const { data, error } = await client.from("purchase_orders").select("*").eq("company_id", companyId).order("created_at", { ascending: false });
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json({ data: (data || []).map(toPurchaseOrder) });
+    }
+
     const result = db.purchaseOrders.filter(po => po.companyId === companyId).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     res.json({ data: result });
   });
@@ -2308,7 +2577,29 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
   });
 
   // Add inventory movement
-  app.post("/api/inventory-movements", (req, res) => {
+  app.post("/api/inventory-movements", async (req, res) => {
+    if (useSupabaseDb) {
+      const client = getRequestSupabase(req);
+      if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+      const { data: movement, error: movementError } = await client
+        .from("inventory_movements")
+        .insert(stripUndefined(fromInventoryMovement(req.body)))
+        .select("*")
+        .single();
+      if (movementError) return res.status(500).json({ error: movementError.message });
+
+      const { data: product } = await client.from("products").select("id, name, stock, company_id").eq("id", req.body.productId).maybeSingle();
+      if (product) {
+        const currentStock = product.stock ?? 0;
+        const newStock = req.body.type === 'Entrada' ? currentStock + req.body.qty : currentStock - req.body.qty;
+        await client.from("products").update({ stock: newStock }).eq("id", product.id);
+        addAuditLog(product.company_id, "INVENTARIO", "Productos", `Inventario de '${product.name}' modificado: ${req.body.type} de ${req.body.qty}`);
+      }
+
+      return res.json(toInventoryMovement(movement));
+    }
+
     const newMovement = {
       id: Date.now().toString(),
       ...req.body
@@ -2412,7 +2703,16 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
   });
 
   // Add ingredient
-  app.post("/api/ingredients", (req, res) => {
+  app.post("/api/ingredients", async (req, res) => {
+    if (useSupabaseDb) {
+      const client = getRequestSupabase(req);
+      if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+      const { data, error } = await client.from("ingredients").insert(stripUndefined(fromIngredient(req.body))).select("*").single();
+      if (error) return res.status(500).json({ error: error.message });
+      addAuditLog(req.body.companyId, "CREAR", "Insumos", `Insumo '${req.body.name}' agregado`);
+      return res.json(toIngredient(data));
+    }
+
     const newIngredient = {
       id: Date.now().toString(),
       ...req.body
@@ -2423,7 +2723,16 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
   });
 
   // Update ingredient
-  app.put("/api/ingredients/:id", (req, res) => {
+  app.put("/api/ingredients/:id", async (req, res) => {
+    if (useSupabaseDb) {
+      const client = getRequestSupabase(req);
+      if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+      const { data, error } = await client.from("ingredients").update(stripUndefined(fromIngredient(req.body))).eq("id", (req.params as any).id).select("*").single();
+      if (error) return res.status(500).json({ error: error.message });
+      addAuditLog(data.company_id, "ACTUALIZAR", "Insumos", `Insumo '${data.name}' actualizado`);
+      return res.json(toIngredient(data));
+    }
+
     const idx = db.ingredients.findIndex(i => i.id === (req.params as any).id);
     if (idx !== -1) {
       db.ingredients[idx] = { ...db.ingredients[idx], ...req.body };
@@ -2435,7 +2744,17 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
   });
 
   // Delete ingredient
-  app.delete("/api/ingredients/:id", (req, res) => {
+  app.delete("/api/ingredients/:id", async (req, res) => {
+    if (useSupabaseDb) {
+      const client = getRequestSupabase(req);
+      if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+      const { data } = await client.from("ingredients").select("company_id, name").eq("id", (req.params as any).id).maybeSingle();
+      const { error } = await client.from("ingredients").delete().eq("id", (req.params as any).id);
+      if (error) return res.status(500).json({ error: error.message });
+      if (data) addAuditLog(data.company_id, "ELIMINAR", "Insumos", `Insumo '${data.name}' eliminado`);
+      return res.json({ success: true });
+    }
+
     const ing = db.ingredients.find(i => i.id === (req.params as any).id);
     if (ing) {
       addAuditLog(ing.companyId, "ELIMINAR", "Insumos", `Insumo '${ing.name}' eliminado`);
@@ -2445,7 +2764,22 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
   });
 
   // Add expense
-  app.post("/api/expenses", (req, res) => {
+  app.post("/api/expenses", async (req, res) => {
+    if (useSupabaseDb) {
+      const client = getRequestSupabase(req);
+      if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+      const { data, error } = await client
+        .from("expenses")
+        .insert(stripUndefined(fromExpense(req.body)))
+        .select("*")
+        .single();
+
+      if (error) return res.status(500).json({ error: error.message });
+      addAuditLog(req.body.companyId, "CREAR", "Gastos", `Gasto de S/ ${req.body.amount} registrado (${req.body.concept})`);
+      return res.json(toExpense(data));
+    }
+
     const newExpense = {
       id: Date.now().toString(),
       ...req.body
@@ -2456,7 +2790,20 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
   });
 
   // Delete expense
-  app.delete("/api/expenses/:id", (req, res) => {
+  app.delete("/api/expenses/:id", async (req, res) => {
+    if (useSupabaseDb) {
+      const client = getRequestSupabase(req);
+      if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+      const { error } = await client
+        .from("expenses")
+        .delete()
+        .eq("id", (req.params as any).id);
+
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json({ success: true });
+    }
+
     const exp = db.expenses.find(e => e.id === (req.params as any).id);
     if (exp) {
       addAuditLog(exp.companyId, "ELIMINAR", "Gastos", `Gasto de S/ ${exp.amount} eliminado`);
@@ -2490,7 +2837,17 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     res.json(newCustomer);
   });
 
-  app.post("/api/crm-deals", (req, res) => {
+  app.post("/api/crm-deals", async (req, res) => {
+    if (useSupabaseDb) {
+      const client = getRequestSupabase(req);
+      if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+      const payload = { ...fromCRMDeal(req.body), stage: req.body.stage || 'Nuevo' };
+      const { data, error } = await client.from("crm_deals").insert(stripUndefined(payload)).select("*").single();
+      if (error) return res.status(500).json({ error: error.message });
+      addAuditLog(req.body.companyId, "CREAR", "CRM", `Oportunidad '${req.body.title}' creada`);
+      return res.json(toCRMDeal(data));
+    }
+
     const newDeal = {
       id: Date.now().toString(),
       stage: 'Nuevo',
@@ -2503,7 +2860,21 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     res.json(newDeal);
   });
 
-  app.put("/api/crm-deals/:id", (req, res) => {
+  app.put("/api/crm-deals/:id", async (req, res) => {
+    if (useSupabaseDb) {
+      const client = getRequestSupabase(req);
+      if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+      const { data, error } = await client
+        .from("crm_deals")
+        .update({ ...stripUndefined(fromCRMDeal(req.body)), updated_at: new Date().toISOString() })
+        .eq("id", (req.params as any).id)
+        .select("*")
+        .single();
+      if (error) return res.status(500).json({ error: error.message });
+      addAuditLog(data.company_id, "ACTUALIZAR", "CRM", `Oportunidad actualizada`);
+      return res.json(toCRMDeal(data));
+    }
+
     const idx = db.crmDeals.findIndex(d => d.id === (req.params as any).id);
     if (idx !== -1) {
       db.crmDeals[idx] = { ...db.crmDeals[idx], ...req.body, updatedAt: new Date().toISOString() };
@@ -2514,7 +2885,17 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     }
   });
 
-  app.delete("/api/crm-deals/:id", (req, res) => {
+  app.delete("/api/crm-deals/:id", async (req, res) => {
+    if (useSupabaseDb) {
+      const client = getRequestSupabase(req);
+      if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+      const { data } = await client.from("crm_deals").select("company_id").eq("id", (req.params as any).id).maybeSingle();
+      const { error } = await client.from("crm_deals").delete().eq("id", (req.params as any).id);
+      if (error) return res.status(500).json({ error: error.message });
+      if (data) addAuditLog(data.company_id, "ELIMINAR", "CRM", `Oportunidad eliminada`);
+      return res.json({ success: true });
+    }
+
     const deal = db.crmDeals.find(d => d.id === (req.params as any).id);
     if (deal) {
       addAuditLog(deal.companyId, "ELIMINAR", "CRM", `Oportunidad eliminada`);
@@ -2523,7 +2904,16 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     res.json({ success: true });
   });
 
-  app.post("/api/debts", (req, res) => {
+  app.post("/api/debts", async (req, res) => {
+    if (useSupabaseDb) {
+      const client = getRequestSupabase(req);
+      if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+      const { data, error } = await client.from("debts").insert(stripUndefined(fromDebt(req.body))).select("*").single();
+      if (error) return res.status(500).json({ error: error.message });
+      addAuditLog(req.body.companyId, "CREAR", "Deudas", `Deuda registrada por ${req.body.amount}`);
+      return res.json(toDebt(data));
+    }
+
     const newDebt = {
       id: Date.now().toString(),
       status: 'Pendiente',
@@ -2534,7 +2924,16 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     res.json(newDebt);
   });
 
-  app.put("/api/debts/:id", (req, res) => {
+  app.put("/api/debts/:id", async (req, res) => {
+    if (useSupabaseDb) {
+      const client = getRequestSupabase(req);
+      if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+      const { data, error } = await client.from("debts").update(stripUndefined(fromDebt(req.body))).eq("id", (req.params as any).id).select("*").single();
+      if (error) return res.status(500).json({ error: error.message });
+      addAuditLog(data.company_id, "ACTUALIZAR", "Deudas", `Deuda actualizada`);
+      return res.json(toDebt(data));
+    }
+
     const idx = db.debts.findIndex(d => d.id === (req.params as any).id);
     if (idx !== -1) {
       db.debts[idx] = { ...db.debts[idx], ...req.body };
@@ -2545,7 +2944,31 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     }
   });
 
-  app.post("/api/debt-payments", (req, res) => {
+  app.post("/api/debt-payments", async (req, res) => {
+    if (useSupabaseDb) {
+      const client = getRequestSupabase(req);
+      if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+      const { data: payment, error: paymentError } = await client
+        .from("debt_payments")
+        .insert(stripUndefined(fromDebtPayment(req.body)))
+        .select("*")
+        .single();
+      if (paymentError) return res.status(500).json({ error: paymentError.message });
+
+      const { data: debt } = await client.from("debts").select("*").eq("id", req.body.debtId).maybeSingle();
+      if (debt) {
+        const newRemaining = Math.max(0, Number(debt.remaining_amount) - Number(req.body.amount));
+        await client
+          .from("debts")
+          .update({ remaining_amount: newRemaining, status: newRemaining === 0 ? 'Pagado' : debt.status })
+          .eq("id", debt.id);
+        addAuditLog(debt.company_id, "PAGO", "Deudas", `Abono de ${req.body.amount} registrado para deuda`);
+      }
+
+      return res.json(toDebtPayment(payment));
+    }
+
     const newPayment = {
       id: Date.now().toString(),
       ...req.body
@@ -2657,12 +3080,26 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
 
   
   // Suppliers
-  app.post("/api/suppliers", (req, res) => {
+  app.post("/api/suppliers", async (req, res) => {
+    if (useSupabaseDb) {
+      const client = getRequestSupabase(req);
+      if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+      const { data, error } = await client.from("suppliers").insert(stripUndefined(fromSupplier(req.body))).select("*").single();
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json(toSupplier(data));
+    }
     const supplier = { id: Date.now().toString(), ...req.body };
     db.suppliers.push(supplier);
     res.json(supplier);
   });
-  app.put("/api/suppliers/:id", (req, res) => {
+  app.put("/api/suppliers/:id", async (req, res) => {
+    if (useSupabaseDb) {
+      const client = getRequestSupabase(req);
+      if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+      const { data, error } = await client.from("suppliers").update(stripUndefined(fromSupplier(req.body))).eq("id", (req.params as any).id).select("*").single();
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json(toSupplier(data));
+    }
     const idx = db.suppliers.findIndex(s => s.id === (req.params as any).id);
     if (idx > -1) {
       db.suppliers[idx] = { ...db.suppliers[idx], ...req.body };
@@ -2673,12 +3110,26 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
   });
 
   // Purchase Orders
-  app.post("/api/purchase-orders", (req, res) => {
+  app.post("/api/purchase-orders", async (req, res) => {
+    if (useSupabaseDb) {
+      const client = getRequestSupabase(req);
+      if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+      const { data, error } = await client.from("purchase_orders").insert(stripUndefined(fromPurchaseOrder(req.body))).select("*").single();
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json(toPurchaseOrder(data));
+    }
     const order = { id: Date.now().toString(), ...req.body };
     db.purchaseOrders.push(order);
     res.json(order);
   });
-  app.put("/api/purchase-orders/:id/status", (req, res) => {
+  app.put("/api/purchase-orders/:id/status", async (req, res) => {
+    if (useSupabaseDb) {
+      const client = getRequestSupabase(req);
+      if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+      const { data, error } = await client.from("purchase_orders").update({ status: req.body.status }).eq("id", (req.params as any).id).select("*").single();
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json(toPurchaseOrder(data));
+    }
     const idx = db.purchaseOrders.findIndex(o => o.id === (req.params as any).id);
     if (idx > -1) {
       db.purchaseOrders[idx].status = req.body.status;
@@ -2689,7 +3140,14 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
   });
 
   // Batches
-  app.post("/api/batches", (req, res) => {
+  app.post("/api/batches", async (req, res) => {
+    if (useSupabaseDb) {
+      const client = getRequestSupabase(req);
+      if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+      const { data, error } = await client.from("batches").insert(stripUndefined(fromBatch(req.body))).select("*").single();
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json(toBatch(data));
+    }
     const batch = { id: Date.now().toString(), ...req.body };
     db.batches.push(batch);
     res.json(batch);
