@@ -352,8 +352,17 @@ export default function Catalog() {
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans pb-20 selection:bg-indigo-200">
       {/* Header */}
       <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-xl border-b border-slate-200 p-4 md:px-10 flex items-center justify-between">
-        <div className="font-display text-2xl font-bold tracking-widest text-slate-800" style={{ color: company.color }}>
-          {company.name}
+        <div className="flex items-center gap-3">
+          {company.logo ? (
+            <img
+              src={company.logo}
+              alt={company.name}
+              className="h-10 w-10 rounded-lg object-cover flex-shrink-0 border border-slate-100"
+            />
+          ) : null}
+          <div className="font-display text-2xl font-bold tracking-widest text-slate-800" style={{ color: company.color }}>
+            {company.name}
+          </div>
         </div>
         <div className="flex items-center gap-4">
           <button 
@@ -384,8 +393,15 @@ export default function Catalog() {
             ⚠️ {storeOpenStatus.message}
           </div>
         )}
+        {company.logo && (
+          <img
+            src={company.logo}
+            alt={company.name}
+            className="w-20 h-20 rounded-2xl object-cover mx-auto mb-4 shadow-sm border border-slate-100"
+          />
+        )}
         <h1 className="text-4xl md:text-5xl font-extrabold mb-4 tracking-tight" style={{ color: company.color }}>{company.name}</h1>
-        <p className="text-slate-500 text-lg">Catálogo Digital Oficial</p>
+        <p className="text-slate-500 text-lg">{company.description || 'Catálogo Digital Oficial'}</p>
       </section>
 
       {/* Social Media Floating Links */}
