@@ -373,7 +373,9 @@ export default function Catalog() {
       {/* Promotional Banner */}
       {company.banner && (
         <div className="w-full bg-slate-900">
-          <img src={company.banner} alt="Promoción" className="w-full max-h-[300px] object-contain mx-auto" />
+          <div className="max-w-[1600px] mx-auto">
+            <img src={company.banner} alt="Promoción" className="w-full max-h-[300px] object-contain mx-auto" />
+          </div>
         </div>
       )}
 
