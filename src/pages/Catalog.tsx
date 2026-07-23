@@ -4,7 +4,7 @@ import { useInView } from 'react-intersection-observer';
 
 import { useParams } from "react-router-dom";
 import { motion } from "motion/react";
-import { Search, ShoppingCart, Info, Share2, Plus, Minus, Trash2, Instagram, Facebook, MapPin, Clock, Phone, Mail, Globe } from "lucide-react";
+import { Search, ShoppingCart, Info, Share2, Plus, Minus, Trash2, Instagram, Facebook, MapPin, Clock, Phone, Mail } from "lucide-react";
 import { Company, Product } from "../types";
 import { apiClient } from "../services/api";
 import { resolveCatalogTaxRate, taxLabel } from "../utils/pricingCalculator";
@@ -407,57 +407,6 @@ export default function Catalog() {
         <h1 className="text-4xl md:text-5xl font-extrabold mb-4 tracking-tight" style={{ color: company.color }}>{company.name}</h1>
         <p className="text-slate-500 text-lg">{company.description || 'Catálogo Digital Oficial'}</p>
       </section>
-
-      {/* Información de contacto */}
-      {(company.address || company.hours || company.whatsapp || company.email || company.website) && (
-        <section className="max-w-4xl mx-auto px-6 mb-10">
-          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-6 flex flex-wrap justify-center gap-x-8 gap-y-4">
-            {company.address && (
-              <div className="flex items-center gap-2.5 text-sm text-slate-600">
-                <MapPin className="w-4 h-4 flex-shrink-0" style={{ color: company.color }} />
-                <span>{company.address}</span>
-              </div>
-            )}
-            {company.hours && (
-              <div className="flex items-start gap-2.5 text-sm text-slate-600">
-                <Clock className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: company.color }} />
-                <span className="whitespace-pre-line">{company.hours}</span>
-              </div>
-            )}
-            {company.whatsapp && (
-              <a
-                href={`https://wa.me/${company.whatsapp}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2.5 text-sm text-slate-600 hover:text-slate-900 transition-colors"
-              >
-                <Phone className="w-4 h-4 flex-shrink-0" style={{ color: company.color }} />
-                <span>{company.whatsapp}</span>
-              </a>
-            )}
-            {company.email && (
-              <a
-                href={`mailto:${company.email}`}
-                className="flex items-center gap-2.5 text-sm text-slate-600 hover:text-slate-900 transition-colors"
-              >
-                <Mail className="w-4 h-4 flex-shrink-0" style={{ color: company.color }} />
-                <span>{company.email}</span>
-              </a>
-            )}
-            {company.website && (
-              <a
-                href={company.website.startsWith('http') ? company.website : `https://${company.website}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2.5 text-sm text-slate-600 hover:text-slate-900 transition-colors"
-              >
-                <Globe className="w-4 h-4 flex-shrink-0" style={{ color: company.color }} />
-                <span>{company.website}</span>
-              </a>
-            )}
-          </div>
-        </section>
-      )}
 
       {/* Social Media Floating Links */}
       {(company.instagram || company.facebook || company.tiktok) && (
