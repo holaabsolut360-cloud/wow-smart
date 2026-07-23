@@ -7,6 +7,8 @@ import { Company } from '../../types';
 interface SettingsTabProps {
   company: Company | null;
   setCompany: React.Dispatch<React.SetStateAction<Company | null>>;
+  onSave: (e: React.FormEvent) => void;
+  isSaving: boolean;
 }
 
 function SectionSummary({
@@ -40,7 +42,7 @@ function SectionSummary({
   );
 }
 
-export function SettingsTab({ company, setCompany }: SettingsTabProps) {
+export function SettingsTab({ company, setCompany, onSave, isSaving }: SettingsTabProps) {
   return (
     <div id="settings" className="max-w-3xl">
       <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight mb-2">Mi Empresa</h2>
@@ -103,7 +105,7 @@ export function SettingsTab({ company, setCompany }: SettingsTabProps) {
         </div>
       </div>
 
-      <form onSubmit={() => {}} className="space-y-4">
+      <form onSubmit={onSave} className="space-y-4">
 
         <details open className="group bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden open:pb-6">
           <SectionSummary icon={Palette} title="Marca" subtitle="Logo, banner, nombre y colores de tu catálogo" />
@@ -557,8 +559,12 @@ export function SettingsTab({ company, setCompany }: SettingsTabProps) {
         </details>
 
         <div className="pt-2">
-          <button type="submit" className="w-full py-3.5 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition-colors shadow-sm shadow-indigo-600/20">
-            Guardar cambios
+          <button
+            type="submit"
+            disabled={isSaving}
+            className="w-full py-3.5 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition-colors shadow-sm shadow-indigo-600/20 disabled:opacity-70 disabled:cursor-not-allowed"
+          >
+            {isSaving ? 'Guardando...' : 'Guardar cambios'}
           </button>
         </div>
       </form>
