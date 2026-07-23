@@ -2,9 +2,9 @@ import React, { useEffect, useState, useMemo } from "react";
 import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
 import { useInView } from 'react-intersection-observer';
 
-import { useParams } from "react-router-dom";
+import { useParams, Link } from "react-router-dom";
 import { motion } from "motion/react";
-import { Search, ShoppingCart, Info, Share2, Plus, Minus, Trash2, Instagram, Facebook } from "lucide-react";
+import { Search, ShoppingCart, Info, Share2, Plus, Minus, Trash2, Instagram, Facebook, MapPin, Clock, Phone, Mail } from "lucide-react";
 import { Company, Product } from "../types";
 import { apiClient } from "../services/api";
 import { resolveCatalogTaxRate, taxLabel } from "../utils/pricingCalculator";
@@ -587,17 +587,64 @@ export default function Catalog() {
 
       {/* Footer */}
       <footer className="bg-slate-900 text-slate-400 py-12 px-6 mt-10">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-6">
-          <div className="text-center md:text-left">
-            <h2 className="text-xl font-bold text-white mb-2">{company.name}</h2>
+        <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-10">
+          <div>
+            <div className="flex items-center gap-3 mb-3">
+              {company.logo && (
+                <div className="h-10 w-10 rounded-lg bg-white flex items-center justify-center overflow-hidden flex-shrink-0 p-1">
+                  <img src={company.logo} alt={company.name} className="max-h-full max-w-full object-contain" />
+                </div>
+              )}
+              <h2 className="text-xl font-bold text-white">{company.name}</h2>
+            </div>
             {company.description && <p className="text-sm max-w-md">{company.description}</p>}
           </div>
-          <div className="flex gap-4">
-            {company.socialLinks?.map((link, i) => (
-              <a key={i} href={link.url} target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors text-sm font-medium">
-                {link.platform}
-              </a>
-            ))}
+
+          {(company.address || company.hours || company.whatsapp || company.email) && (
+            <div>
+              <h3 className="text-white font-bold text-sm uppercase tracking-wider mb-3">Contacto</h3>
+              <div className="space-y-2 text-sm">
+                {company.address && (
+                  <div className="flex items-start gap-2">
+                    <MapPin className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                    <span>{company.address}</span>
+                  </div>
+                )}
+                {company.hours && (
+                  <div className="flex items-start gap-2">
+                    <Clock className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                    <span className="whitespace-pre-line">{company.hours}</span>
+                  </div>
+                )}
+                {company.whatsapp && (
+                  <a href={`https://wa.me/${company.whatsapp}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 hover:text-white transition-colors">
+                    <Phone className="w-4 h-4 flex-shrink-0" />
+                    <span>{company.whatsapp}</span>
+                  </a>
+                )}
+                {company.email && (
+                  <a href={`mailto:${company.email}`} className="flex items-center gap-2 hover:text-white transition-colors">
+                    <Mail className="w-4 h-4 flex-shrink-0" />
+                    <span>{company.email}</span>
+                  </a>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div>
+            {company.socialLinks && company.socialLinks.length > 0 && (
+              <>
+                <h3 className="text-white font-bold text-sm uppercase tracking-wider mb-3">Síguenos</h3>
+                <div className="flex flex-wrap gap-4">
+                  {company.socialLinks.map((link, i) => (
+                    <a key={i} href={link.url} target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors text-sm font-medium">
+                      {link.platform}
+                    </a>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         </div>
       </footer>
