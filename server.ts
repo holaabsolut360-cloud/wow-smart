@@ -157,6 +157,21 @@ const db = {
   batches: []
 };
 
+const defaultPaymentSettings = {
+  companyName: 'WowSmart SAC',
+  accountNumber: '999 888 777',
+};
+let localPaymentSettings = { ...defaultPaymentSettings };
+
+const normalizePaymentSettings = (value: any) => ({
+  companyName: typeof value?.companyName === 'string' && value.companyName.trim()
+    ? value.companyName.trim()
+    : defaultPaymentSettings.companyName,
+  accountNumber: typeof value?.accountNumber === 'string' && value.accountNumber.trim()
+    ? value.accountNumber.trim()
+    : defaultPaymentSettings.accountNumber,
+});
+
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT || 3000);
@@ -702,6 +717,7 @@ const authMiddleware = async (req: express.Request, res: express.Response, next:
   const publicApiRoute =
     req.path.startsWith('/catalog') ||
     req.path.startsWith('/superadmin') ||
+    req.path === '/payment-settings' ||
     req.path === '/approve-subscription' ||
     req.path === '/complaints' ||
     (req.method === 'GET' && req.path === '/products') ||
@@ -865,6 +881,62 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     clearSuperAdminCookie(res);
     logSuperAdminAction("LOGOUT", null, null, null, "Cierre de sesión del panel SuperAdmin");
     res.json({ authenticated: false });
+  });
+
+  const readPaymentSettings = async () => {
+    if (!useSupabaseDb) return localPaymentSettings;
+
+    const client = supabaseAdmin || supabase;
+    if (!client) throw new Error('Supabase is not configured');
+
+    const { data, error } = await client
+      .from('platform_settings')
+      .select('value')
+      .eq('key', 'payment_settings')
+      .maybeSingle();
+
+    if (error) throw new Error(error.message);
+    return normalizePaymentSettings(data?.value);
+  };
+
+  app.get('/api/payment-settings', async (_req, res) => {
+    try {
+      res.json(await readPaymentSettings());
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || 'Unable to load payment settings' });
+    }
+  });
+
+  app.get('/api/superadmin/settings/pagos', requireSuperAdmin, async (_req, res) => {
+    try {
+      res.json(await readPaymentSettings());
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || 'Unable to load payment settings' });
+    }
+  });
+
+  app.put('/api/superadmin/settings/pagos', requireSuperAdmin, async (req, res) => {
+    const settings = normalizePaymentSettings(req.body);
+
+    try {
+      if (!useSupabaseDb) {
+        localPaymentSettings = settings;
+        return res.json(settings);
+      }
+
+      if (!supabaseAdmin) {
+        return res.status(503).json({ error: 'SuperAdmin storage is not configured' });
+      }
+
+      const { error } = await supabaseAdmin
+        .from('platform_settings')
+        .upsert({ key: 'payment_settings', value: settings, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json(settings);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message || 'Unable to save payment settings' });
+    }
   });
 
   // Libro de Reclamaciones — endpoint público, no requiere sesión
@@ -1795,8 +1867,11 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
       const client = getRequestSupabase(req);
       if (!client) return res.status(503).json({ error: "Supabase is not configured" });
 
+      // Esta ruta es pública (visitantes sin cuenta), así que usamos las
+      // vistas *_public que excluyen datos sensibles (cuenta bancaria,
+      // estado de suscripción, costo/margen de productos).
       const { data: companyRow, error: companyError } = await client
-        .from("companies")
+        .from("companies_public")
         .select("*")
         .eq("slug", req.params.slug)
         .single();
@@ -1806,7 +1881,7 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
       }
 
       const { data: productRows, error: productsError } = await client
-        .from("products")
+        .from("products_public")
         .select("*")
         .eq("company_id", companyRow.id)
         .order("created_at", { ascending: false });
@@ -2166,8 +2241,17 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
       if (!client) return res.status(503).json({ error: "Supabase is not configured" });
       if (!companyId) return res.status(400).json({ error: "companyId required" });
 
+      // Esta ruta la usan tanto el dashboard autenticado (ProductsTab,
+      // InventoryTab, PosSystem — necesitan purchase_cost/margin_percent)
+      // como el catálogo público sin login (Catalog.tsx). apiClient solo
+      // manda el header Authorization cuando hay una sesión real, así que
+      // lo usamos para decidir si consultamos la tabla completa o la vista
+      // pública sin datos de costo/margen.
+      const isAuthenticatedRequest = Boolean(req.headers.authorization);
+      const sourceTable = isAuthenticatedRequest ? "products" : "products_public";
+
       let query = client
-        .from("products")
+        .from(sourceTable)
         .select("*", { count: "exact" })
         .eq("company_id", companyId)
         .order("created_at", { ascending: false });
