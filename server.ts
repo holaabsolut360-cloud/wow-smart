@@ -237,6 +237,25 @@ const superAdminPassword = process.env.SUPERADMIN_PASSWORD || "";
 const superAdminSessionSecret = process.env.SUPERADMIN_SESSION_SECRET || "";
 const superAdminCookieName = "wowsmart_sa";
 
+// Precios oficiales de los planes de suscripción, espejo de PLAN_DETAILS en
+// src/pages/Checkout.tsx. Vive aquí (no solo en el frontend) porque el monto
+// del comprobante de pago se recalcula en servidor — nunca confiamos en el
+// `amount` que manda el navegador, para que nadie pueda enviar un monto
+// menor al aprobar su comprobante.
+// ⚠️ Si cambias un precio en Checkout.tsx, cámbialo también aquí.
+const IGV_RATE_SERVER = 0.18;
+const SUBSCRIPTION_PLAN_PRICES: Record<string, number> = {
+  "Emprendedor": 15,
+  "Negocio Pequeño": 39,
+  "Empresa": 79,
+};
+const computeSubscriptionAmount = (planName: string): number | null => {
+  const basePrice = SUBSCRIPTION_PLAN_PRICES[planName];
+  if (basePrice === undefined) return null;
+  const igv = Math.round(basePrice * IGV_RATE_SERVER * 100) / 100;
+  return Math.round((basePrice + igv) * 100) / 100;
+};
+
 // Protección contra fuerza bruta: máximo 5 intentos de login por IP cada
 // 15 minutos. No cuenta los intentos exitosos, solo los fallidos, para no
 // bloquear a un admin legítimo que ya inició sesión varias veces seguidas.
@@ -1026,6 +1045,23 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
       return res.status(400).json({ error: "businessName y plan son requeridos" });
     }
 
+    // El monto NUNCA se toma del cliente: se recalcula en servidor a partir
+    // del nombre del plan, usando el mismo precio + IGV que ve el usuario en
+    // el checkout. Si el plan no coincide con uno conocido, rechazamos —
+    // evita que alguien invente un plan con un monto arbitrario.
+    const serverAmount = computeSubscriptionAmount(plan);
+    if (serverAmount === null) {
+      return res.status(400).json({ error: "Plan no reconocido" });
+    }
+    if (typeof amount === "number" && Math.abs(amount - serverAmount) > 0.01) {
+      // No es necesariamente un ataque (podría ser un plan editado desde
+      // SuperAdmin sin actualizar este mapa), pero lo dejamos registrado
+      // en el log del servidor para poder revisarlo.
+      console.warn(
+        `[subscription-payments] Monto recibido (${amount}) no coincide con el calculado en servidor (${serverAmount}) para el plan "${plan}". Usando el monto del servidor.`
+      );
+    }
+
     const client = supabaseAdmin || getRequestSupabase(req);
     if (!client) return res.status(503).json({ error: "Supabase is not configured" });
 
@@ -1047,7 +1083,7 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
       business_name: businessName,
       email: user.email || null,
       plan,
-      amount: Number(amount) || 0,
+      amount: serverAmount,
       payment_method: paymentMethod || null,
       reference: reference || null,
       status: "Pendiente",
