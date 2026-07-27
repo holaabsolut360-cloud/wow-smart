@@ -181,14 +181,33 @@ async function startServer() {
   app.use(express.json({ limit: '50mb' }));
 
   // Headers de seguridad básicos (anti-clickjacking, anti-MIME-sniffing,
-  // HSTS, etc.). El Content-Security-Policy queda desactivado por ahora:
-  // el catálogo público inyecta Google Analytics / Meta Pixel por empresa
-  // (company.googleAnalyticsId, company.metaPixelId) y carga imágenes desde
-  // Supabase Storage — un CSP por defecto rompería eso en silencio. Hay que
-  // armar uno a medida (whitelist de dominios) y probarlo aparte, no
-  // activarlo a ciegas en un cambio que ya toca producción.
+  // HSTS, etc.) más un CSP a medida (no la config por defecto de helmet,
+  // que rompería Google Analytics / Meta Pixel e imágenes de Supabase
+  // Storage).
+  //
+  // 'unsafe-inline' en script-src es una concesión necesaria: el catálogo
+  // público inyecta el snippet de inicio de GA y Meta Pixel como
+  // <script>.innerHTML dinámico (ver Catalog.tsx), no como archivos
+  // externos con nonce. Igual se gana protección real del resto de
+  // directivas (object-src, frame-ancestors, base-uri, form-action, y que
+  // solo se puedan cargar scripts/imágenes/conexiones de los dominios de
+  // esta lista, nada más). Una mejora futura sería migrar esos dos
+  // snippets a un patrón con nonce para poder quitar 'unsafe-inline'.
   app.use(helmet({
-    contentSecurityPolicy: false,
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "https://www.googletagmanager.com", "https://connect.facebook.net"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        fontSrc: ["'self'", "https://fonts.gstatic.com"],
+        imgSrc: ["'self'", "data:", "blob:", "https://*.supabase.co", "https://api.dicebear.com", "https://www.facebook.com", "https://www.google-analytics.com"],
+        connectSrc: ["'self'", "https://*.supabase.co", "https://www.google-analytics.com", "https://www.googletagmanager.com", "https://www.facebook.com", "https://connect.facebook.net"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+        frameAncestors: ["'none'"],
+      },
+    },
     crossOriginEmbedderPolicy: false,
   }));
 
