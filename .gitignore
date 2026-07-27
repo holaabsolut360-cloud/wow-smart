@@ -6,3 +6,7 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Scripts de un solo uso — no deben commitearse a futuro
+patch_*.cjs
+fix_*.cjs
