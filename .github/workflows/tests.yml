@@ -1,0 +1,36 @@
+name: Tests
+
+# Corre en cada push a main y en cada Pull Request hacia main. No bloquea
+# ni interfiere con tu deploy en Render (que es un servicio aparte) — esto
+# solo te avisa si algo se rompió, antes de que llegue a producción.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js 22 (misma versión que el Dockerfile de producción)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Instalar dependencias (exactas, igual que en el build de Render)
+        run: npm ci
+
+      - name: Correr tests
+        run: npm test
+
+      # El paso de "npm run typecheck" queda fuera por ahora: el proyecto
+      # ya tiene errores de TypeScript preexistentes (falta @types/react y
+      # @types/react-dom como devDependency) sin relación a este workflow.
+      # Agregarlo tal cual dejaría el Action en rojo permanentemente,
+      # incluso en commits correctos. Instalar esas dos dependencias es
+      # una tarea aparte — avísame si quieres que la resolvamos.
