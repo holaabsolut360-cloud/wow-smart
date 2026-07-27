@@ -283,7 +283,54 @@ const getCookieValue = (req: express.Request, name: string) => {
     ?.slice(name.length + 1) || "";
 };
 
-const isSuperAdminRequest = (req: express.Request) => {
+// ----------------------------------------------------------------------------
+// Sesiones de SuperAdmin
+// ----------------------------------------------------------------------------
+// Antes: la cookie era literalmente SUPERADMIN_SESSION_SECRET — igual para
+// todos los logins, sin forma de cerrar una sesión específica.
+// Ahora: cada login genera un token aleatorio de 256 bits. Solo se guarda su
+// hash (igual que una contraseña) en la tabla `superadmin_sessions` — o en
+// un Map en memoria si Supabase no está configurado (solo para desarrollo
+// local sin credenciales; en producción supabaseAdmin siempre debe existir).
+const SUPERADMIN_SESSION_TTL_MS = 8 * 60 * 60 * 1000; // 8 horas, igual que antes
+const inMemorySuperAdminSessions = new Map<string, { email: string; expiresAt: number }>();
+
+const hashSessionToken = (token: string) => crypto.createHash("sha256").update(token).digest("hex");
+
+const getSuperAdminSessionClient = () => supabaseAdmin || supabase || null;
+
+const createSuperAdminSession = async (email: string): Promise<string> => {
+  const token = crypto.randomBytes(32).toString("hex");
+  const tokenHash = hashSessionToken(token);
+  const expiresAt = new Date(Date.now() + SUPERADMIN_SESSION_TTL_MS);
+
+  const client = getSuperAdminSessionClient();
+  if (client) {
+    await client.from("superadmin_sessions").insert({
+      token_hash: tokenHash,
+      email,
+      expires_at: expiresAt.toISOString(),
+    });
+    // Limpieza perezosa de sesiones vencidas — no hace falta un cron aparte.
+    await client.from("superadmin_sessions").delete().lt("expires_at", new Date().toISOString());
+  } else {
+    inMemorySuperAdminSessions.set(tokenHash, { email, expiresAt: expiresAt.getTime() });
+  }
+
+  return token;
+};
+
+const revokeSuperAdminSession = async (token: string) => {
+  const tokenHash = hashSessionToken(token);
+  const client = getSuperAdminSessionClient();
+  if (client) {
+    await client.from("superadmin_sessions").delete().eq("token_hash", tokenHash);
+  } else {
+    inMemorySuperAdminSessions.delete(tokenHash);
+  }
+};
+
+const isSuperAdminRequest = async (req: express.Request): Promise<boolean> => {
   const rawToken = getCookieValue(req, superAdminCookieName);
   if (!rawToken) return false;
 
@@ -294,14 +341,39 @@ const isSuperAdminRequest = (req: express.Request) => {
     // Si no se puede decodificar, se compara tal cual llegó.
   }
 
-  return Boolean(superAdminSessionSecret && token === superAdminSessionSecret);
+  const tokenHash = hashSessionToken(token);
+  const client = getSuperAdminSessionClient();
+
+  if (client) {
+    try {
+      const { data } = await client
+        .from("superadmin_sessions")
+        .select("expires_at")
+        .eq("token_hash", tokenHash)
+        .maybeSingle();
+      if (!data) return false;
+      return new Date(data.expires_at).getTime() > Date.now();
+    } catch {
+      // Si Supabase no responde, tratamos la sesión como inválida en vez
+      // de tumbar el request sin respuesta — más seguro que fallar abierto.
+      return false;
+    }
+  }
+
+  const entry = inMemorySuperAdminSessions.get(tokenHash);
+  if (!entry) return false;
+  if (entry.expiresAt <= Date.now()) {
+    inMemorySuperAdminSessions.delete(tokenHash);
+    return false;
+  }
+  return true;
 };
 
-const setSuperAdminCookie = (res: express.Response) => {
+const setSuperAdminCookie = (res: express.Response, token: string) => {
   const secure = isProduction ? "; Secure" : "";
   res.setHeader(
     "Set-Cookie",
-    `${superAdminCookieName}=${encodeURIComponent(superAdminSessionSecret)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${secure}`,
+    `${superAdminCookieName}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${secure}`,
   );
 };
 
@@ -313,8 +385,8 @@ const clearSuperAdminCookie = (res: express.Response) => {
   );
 };
 
-const requireSuperAdmin = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-  if (!isSuperAdminRequest(req)) {
+const requireSuperAdmin = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (!(await isSuperAdminRequest(req))) {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
@@ -889,8 +961,8 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
   app.use('/api', authMiddleware);
   app.use('/api', subscriptionGuard);
 
-  app.get("/api/superadmin/session", (req, res) => {
-    res.json({ authenticated: isSuperAdminRequest(req) });
+  app.get("/api/superadmin/session", async (req, res) => {
+    res.json({ authenticated: await isSuperAdminRequest(req) });
   });
 
   app.post("/api/superadmin/login", superAdminLoginLimiter, async (req, res) => {
@@ -915,7 +987,8 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
           .maybeSingle();
 
         if (adminRow && verifyPassword(password, adminRow.password_hash, adminRow.password_salt)) {
-          setSuperAdminCookie(res);
+          const sessionToken = await createSuperAdminSession(email);
+          setSuperAdminCookie(res, sessionToken);
           await client.from("superadmin_users").update({ last_login_at: new Date().toISOString() }).eq("id", adminRow.id);
           await logSuperAdminAction("LOGIN", null, null, email, "Inicio de sesión en el panel SuperAdmin");
           return res.json({ authenticated: true });
@@ -930,7 +1003,8 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
       timingSafeStringEqual(email, superAdminEmail) &&
       timingSafeStringEqual(password, superAdminPassword)
     ) {
-      setSuperAdminCookie(res);
+      const sessionToken = await createSuperAdminSession(email);
+      setSuperAdminCookie(res, sessionToken);
       await logSuperAdminAction("LOGIN", null, null, email, "Inicio de sesión (cuenta maestra) en el panel SuperAdmin");
       return res.json({ authenticated: true });
     }
@@ -938,7 +1012,17 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     res.status(401).json({ error: "Invalid credentials" });
   });
 
-  app.post("/api/superadmin/logout", (_req, res) => {
+  app.post("/api/superadmin/logout", async (req, res) => {
+    const rawToken = getCookieValue(req, superAdminCookieName);
+    if (rawToken) {
+      let token = rawToken;
+      try {
+        token = decodeURIComponent(rawToken);
+      } catch {
+        // token tal cual llegó
+      }
+      await revokeSuperAdminSession(token);
+    }
     clearSuperAdminCookie(res);
     logSuperAdminAction("LOGOUT", null, null, null, "Cierre de sesión del panel SuperAdmin");
     res.json({ authenticated: false });
