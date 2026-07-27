@@ -5,6 +5,7 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { Resend } from 'resend';
 import crypto from "crypto";
+import rateLimit from "express-rate-limit";
 
 const isProduction = process.env.NODE_ENV === "production";
 const requiredServerEnv = ["SUPABASE_URL", "SUPABASE_ANON_KEY"];
@@ -223,6 +224,18 @@ const superAdminPassword = process.env.SUPERADMIN_PASSWORD || "";
 const superAdminSessionSecret = process.env.SUPERADMIN_SESSION_SECRET || "";
 const superAdminCookieName = "wowsmart_sa";
 
+// Protección contra fuerza bruta: máximo 5 intentos de login por IP cada
+// 15 minutos. No cuenta los intentos exitosos, solo los fallidos, para no
+// bloquear a un admin legítimo que ya inició sesión varias veces seguidas.
+const superAdminLoginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  message: { error: "Demasiados intentos de inicio de sesión. Intenta de nuevo en unos minutos." },
+});
+
 if (isProduction && (!superAdminEmail || !superAdminPassword || !superAdminSessionSecret)) {
   throw new Error("Missing SUPERADMIN_EMAIL, SUPERADMIN_PASSWORD, or SUPERADMIN_SESSION_SECRET for production.");
 }
@@ -289,6 +302,17 @@ const verifyPassword = (password: string, hash: string, salt: string) => {
   } catch {
     return false;
   }
+};
+
+// Compara dos strings en tiempo constante (evita que un atacante infiera
+// caracteres correctos midiendo cuánto tarda la respuesta). timingSafeEqual
+// exige buffers del mismo largo, así que igualamos el tamaño con un hash
+// fijo cuando difieren — así la comparación real sigue siendo constante
+// y nunca revela si el largo del candidato coincidía con el esperado.
+const timingSafeStringEqual = (a: string, b: string) => {
+  const bufA = Buffer.from(crypto.createHash("sha256").update(a).digest());
+  const bufB = Buffer.from(crypto.createHash("sha256").update(b).digest());
+  return crypto.timingSafeEqual(bufA, bufB);
 };
 
 const logSuperAdminAction = async (
@@ -837,7 +861,7 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     res.json({ authenticated: isSuperAdminRequest(req) });
   });
 
-  app.post("/api/superadmin/login", async (req, res) => {
+  app.post("/api/superadmin/login", superAdminLoginLimiter, async (req, res) => {
     if (!superAdminSessionSecret) {
       return res.status(503).json({ error: "SuperAdmin access is not configured" });
     }
@@ -868,7 +892,12 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     }
 
     // 2) Cuenta maestra por variables de entorno (compatibilidad con la configuración inicial)
-    if (superAdminEmail && superAdminPassword && email === superAdminEmail && password === superAdminPassword) {
+    if (
+      superAdminEmail &&
+      superAdminPassword &&
+      timingSafeStringEqual(email, superAdminEmail) &&
+      timingSafeStringEqual(password, superAdminPassword)
+    ) {
       setSuperAdminCookie(res);
       await logSuperAdminAction("LOGIN", null, null, email, "Inicio de sesión (cuenta maestra) en el panel SuperAdmin");
       return res.json({ authenticated: true });
