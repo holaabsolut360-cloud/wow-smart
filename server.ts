@@ -5,6 +5,8 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { Resend } from 'resend';
 import crypto from "crypto";
+import rateLimit from "express-rate-limit";
+import helmet from "helmet";
 
 const isProduction = process.env.NODE_ENV === "production";
 const requiredServerEnv = ["SUPABASE_URL", "SUPABASE_ANON_KEY"];
@@ -157,11 +159,38 @@ const db = {
   batches: []
 };
 
+const defaultPaymentSettings = {
+  companyName: 'WowSmart SAC',
+  accountNumber: '999 888 777',
+};
+let localPaymentSettings = { ...defaultPaymentSettings };
+
+const normalizePaymentSettings = (value: any) => ({
+  companyName: typeof value?.companyName === 'string' && value.companyName.trim()
+    ? value.companyName.trim()
+    : defaultPaymentSettings.companyName,
+  accountNumber: typeof value?.accountNumber === 'string' && value.accountNumber.trim()
+    ? value.accountNumber.trim()
+    : defaultPaymentSettings.accountNumber,
+});
+
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT || 3000);
 
   app.use(express.json({ limit: '50mb' }));
+
+  // Headers de seguridad básicos (anti-clickjacking, anti-MIME-sniffing,
+  // HSTS, etc.). El Content-Security-Policy queda desactivado por ahora:
+  // el catálogo público inyecta Google Analytics / Meta Pixel por empresa
+  // (company.googleAnalyticsId, company.metaPixelId) y carga imágenes desde
+  // Supabase Storage — un CSP por defecto rompería eso en silencio. Hay que
+  // armar uno a medida (whitelist de dominios) y probarlo aparte, no
+  // activarlo a ciegas en un cambio que ya toca producción.
+  app.use(helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+  }));
 
   app.get("/health", (_req, res) => {
     res.json({
@@ -208,6 +237,37 @@ const superAdminPassword = process.env.SUPERADMIN_PASSWORD || "";
 const superAdminSessionSecret = process.env.SUPERADMIN_SESSION_SECRET || "";
 const superAdminCookieName = "wowsmart_sa";
 
+// Precios oficiales de los planes de suscripción, espejo de PLAN_DETAILS en
+// src/pages/Checkout.tsx. Vive aquí (no solo en el frontend) porque el monto
+// del comprobante de pago se recalcula en servidor — nunca confiamos en el
+// `amount` que manda el navegador, para que nadie pueda enviar un monto
+// menor al aprobar su comprobante.
+// ⚠️ Si cambias un precio en Checkout.tsx, cámbialo también aquí.
+const IGV_RATE_SERVER = 0.18;
+const SUBSCRIPTION_PLAN_PRICES: Record<string, number> = {
+  "Emprendedor": 15,
+  "Negocio Pequeño": 39,
+  "Empresa": 79,
+};
+const computeSubscriptionAmount = (planName: string): number | null => {
+  const basePrice = SUBSCRIPTION_PLAN_PRICES[planName];
+  if (basePrice === undefined) return null;
+  const igv = Math.round(basePrice * IGV_RATE_SERVER * 100) / 100;
+  return Math.round((basePrice + igv) * 100) / 100;
+};
+
+// Protección contra fuerza bruta: máximo 5 intentos de login por IP cada
+// 15 minutos. No cuenta los intentos exitosos, solo los fallidos, para no
+// bloquear a un admin legítimo que ya inició sesión varias veces seguidas.
+const superAdminLoginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  message: { error: "Demasiados intentos de inicio de sesión. Intenta de nuevo en unos minutos." },
+});
+
 if (isProduction && (!superAdminEmail || !superAdminPassword || !superAdminSessionSecret)) {
   throw new Error("Missing SUPERADMIN_EMAIL, SUPERADMIN_PASSWORD, or SUPERADMIN_SESSION_SECRET for production.");
 }
@@ -223,7 +283,54 @@ const getCookieValue = (req: express.Request, name: string) => {
     ?.slice(name.length + 1) || "";
 };
 
-const isSuperAdminRequest = (req: express.Request) => {
+// ----------------------------------------------------------------------------
+// Sesiones de SuperAdmin
+// ----------------------------------------------------------------------------
+// Antes: la cookie era literalmente SUPERADMIN_SESSION_SECRET — igual para
+// todos los logins, sin forma de cerrar una sesión específica.
+// Ahora: cada login genera un token aleatorio de 256 bits. Solo se guarda su
+// hash (igual que una contraseña) en la tabla `superadmin_sessions` — o en
+// un Map en memoria si Supabase no está configurado (solo para desarrollo
+// local sin credenciales; en producción supabaseAdmin siempre debe existir).
+const SUPERADMIN_SESSION_TTL_MS = 8 * 60 * 60 * 1000; // 8 horas, igual que antes
+const inMemorySuperAdminSessions = new Map<string, { email: string; expiresAt: number }>();
+
+const hashSessionToken = (token: string) => crypto.createHash("sha256").update(token).digest("hex");
+
+const getSuperAdminSessionClient = () => supabaseAdmin || supabase || null;
+
+const createSuperAdminSession = async (email: string): Promise<string> => {
+  const token = crypto.randomBytes(32).toString("hex");
+  const tokenHash = hashSessionToken(token);
+  const expiresAt = new Date(Date.now() + SUPERADMIN_SESSION_TTL_MS);
+
+  const client = getSuperAdminSessionClient();
+  if (client) {
+    await client.from("superadmin_sessions").insert({
+      token_hash: tokenHash,
+      email,
+      expires_at: expiresAt.toISOString(),
+    });
+    // Limpieza perezosa de sesiones vencidas — no hace falta un cron aparte.
+    await client.from("superadmin_sessions").delete().lt("expires_at", new Date().toISOString());
+  } else {
+    inMemorySuperAdminSessions.set(tokenHash, { email, expiresAt: expiresAt.getTime() });
+  }
+
+  return token;
+};
+
+const revokeSuperAdminSession = async (token: string) => {
+  const tokenHash = hashSessionToken(token);
+  const client = getSuperAdminSessionClient();
+  if (client) {
+    await client.from("superadmin_sessions").delete().eq("token_hash", tokenHash);
+  } else {
+    inMemorySuperAdminSessions.delete(tokenHash);
+  }
+};
+
+const isSuperAdminRequest = async (req: express.Request): Promise<boolean> => {
   const rawToken = getCookieValue(req, superAdminCookieName);
   if (!rawToken) return false;
 
@@ -234,14 +341,39 @@ const isSuperAdminRequest = (req: express.Request) => {
     // Si no se puede decodificar, se compara tal cual llegó.
   }
 
-  return Boolean(superAdminSessionSecret && token === superAdminSessionSecret);
+  const tokenHash = hashSessionToken(token);
+  const client = getSuperAdminSessionClient();
+
+  if (client) {
+    try {
+      const { data } = await client
+        .from("superadmin_sessions")
+        .select("expires_at")
+        .eq("token_hash", tokenHash)
+        .maybeSingle();
+      if (!data) return false;
+      return new Date(data.expires_at).getTime() > Date.now();
+    } catch {
+      // Si Supabase no responde, tratamos la sesión como inválida en vez
+      // de tumbar el request sin respuesta — más seguro que fallar abierto.
+      return false;
+    }
+  }
+
+  const entry = inMemorySuperAdminSessions.get(tokenHash);
+  if (!entry) return false;
+  if (entry.expiresAt <= Date.now()) {
+    inMemorySuperAdminSessions.delete(tokenHash);
+    return false;
+  }
+  return true;
 };
 
-const setSuperAdminCookie = (res: express.Response) => {
+const setSuperAdminCookie = (res: express.Response, token: string) => {
   const secure = isProduction ? "; Secure" : "";
   res.setHeader(
     "Set-Cookie",
-    `${superAdminCookieName}=${encodeURIComponent(superAdminSessionSecret)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${secure}`,
+    `${superAdminCookieName}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${secure}`,
   );
 };
 
@@ -253,8 +385,8 @@ const clearSuperAdminCookie = (res: express.Response) => {
   );
 };
 
-const requireSuperAdmin = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-  if (!isSuperAdminRequest(req)) {
+const requireSuperAdmin = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (!(await isSuperAdminRequest(req))) {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
@@ -274,6 +406,17 @@ const verifyPassword = (password: string, hash: string, salt: string) => {
   } catch {
     return false;
   }
+};
+
+// Compara dos strings en tiempo constante (evita que un atacante infiera
+// caracteres correctos midiendo cuánto tarda la respuesta). timingSafeEqual
+// exige buffers del mismo largo, así que igualamos el tamaño con un hash
+// fijo cuando difieren — así la comparación real sigue siendo constante
+// y nunca revela si el largo del candidato coincidía con el esperado.
+const timingSafeStringEqual = (a: string, b: string) => {
+  const bufA = Buffer.from(crypto.createHash("sha256").update(a).digest());
+  const bufB = Buffer.from(crypto.createHash("sha256").update(b).digest());
+  return crypto.timingSafeEqual(bufA, bufB);
 };
 
 const logSuperAdminAction = async (
@@ -702,6 +845,7 @@ const authMiddleware = async (req: express.Request, res: express.Response, next:
   const publicApiRoute =
     req.path.startsWith('/catalog') ||
     req.path.startsWith('/superadmin') ||
+    req.path === '/payment-settings' ||
     req.path === '/approve-subscription' ||
     req.path === '/complaints' ||
     (req.method === 'GET' && req.path === '/products') ||
@@ -817,11 +961,11 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
   app.use('/api', authMiddleware);
   app.use('/api', subscriptionGuard);
 
-  app.get("/api/superadmin/session", (req, res) => {
-    res.json({ authenticated: isSuperAdminRequest(req) });
+  app.get("/api/superadmin/session", async (req, res) => {
+    res.json({ authenticated: await isSuperAdminRequest(req) });
   });
 
-  app.post("/api/superadmin/login", async (req, res) => {
+  app.post("/api/superadmin/login", superAdminLoginLimiter, async (req, res) => {
     if (!superAdminSessionSecret) {
       return res.status(503).json({ error: "SuperAdmin access is not configured" });
     }
@@ -843,7 +987,8 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
           .maybeSingle();
 
         if (adminRow && verifyPassword(password, adminRow.password_hash, adminRow.password_salt)) {
-          setSuperAdminCookie(res);
+          const sessionToken = await createSuperAdminSession(email);
+          setSuperAdminCookie(res, sessionToken);
           await client.from("superadmin_users").update({ last_login_at: new Date().toISOString() }).eq("id", adminRow.id);
           await logSuperAdminAction("LOGIN", null, null, email, "Inicio de sesión en el panel SuperAdmin");
           return res.json({ authenticated: true });
@@ -852,8 +997,14 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     }
 
     // 2) Cuenta maestra por variables de entorno (compatibilidad con la configuración inicial)
-    if (superAdminEmail && superAdminPassword && email === superAdminEmail && password === superAdminPassword) {
-      setSuperAdminCookie(res);
+    if (
+      superAdminEmail &&
+      superAdminPassword &&
+      timingSafeStringEqual(email, superAdminEmail) &&
+      timingSafeStringEqual(password, superAdminPassword)
+    ) {
+      const sessionToken = await createSuperAdminSession(email);
+      setSuperAdminCookie(res, sessionToken);
       await logSuperAdminAction("LOGIN", null, null, email, "Inicio de sesión (cuenta maestra) en el panel SuperAdmin");
       return res.json({ authenticated: true });
     }
@@ -861,10 +1012,76 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     res.status(401).json({ error: "Invalid credentials" });
   });
 
-  app.post("/api/superadmin/logout", (_req, res) => {
+  app.post("/api/superadmin/logout", async (req, res) => {
+    const rawToken = getCookieValue(req, superAdminCookieName);
+    if (rawToken) {
+      let token = rawToken;
+      try {
+        token = decodeURIComponent(rawToken);
+      } catch {
+        // token tal cual llegó
+      }
+      await revokeSuperAdminSession(token);
+    }
     clearSuperAdminCookie(res);
     logSuperAdminAction("LOGOUT", null, null, null, "Cierre de sesión del panel SuperAdmin");
     res.json({ authenticated: false });
+  });
+
+  const readPaymentSettings = async () => {
+    if (!useSupabaseDb) return localPaymentSettings;
+
+    const client = supabaseAdmin || supabase;
+    if (!client) throw new Error('Supabase is not configured');
+
+    const { data, error } = await client
+      .from('platform_settings')
+      .select('value')
+      .eq('key', 'payment_settings')
+      .maybeSingle();
+
+    if (error) throw new Error(error.message);
+    return normalizePaymentSettings(data?.value);
+  };
+
+  app.get('/api/payment-settings', async (_req, res) => {
+    try {
+      res.json(await readPaymentSettings());
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || 'Unable to load payment settings' });
+    }
+  });
+
+  app.get('/api/superadmin/settings/pagos', requireSuperAdmin, async (_req, res) => {
+    try {
+      res.json(await readPaymentSettings());
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || 'Unable to load payment settings' });
+    }
+  });
+
+  app.put('/api/superadmin/settings/pagos', requireSuperAdmin, async (req, res) => {
+    const settings = normalizePaymentSettings(req.body);
+
+    try {
+      if (!useSupabaseDb) {
+        localPaymentSettings = settings;
+        return res.json(settings);
+      }
+
+      if (!supabaseAdmin) {
+        return res.status(503).json({ error: 'SuperAdmin storage is not configured' });
+      }
+
+      const { error } = await supabaseAdmin
+        .from('platform_settings')
+        .upsert({ key: 'payment_settings', value: settings, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json(settings);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message || 'Unable to save payment settings' });
+    }
   });
 
   // Libro de Reclamaciones — endpoint público, no requiere sesión
@@ -912,6 +1129,23 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
       return res.status(400).json({ error: "businessName y plan son requeridos" });
     }
 
+    // El monto NUNCA se toma del cliente: se recalcula en servidor a partir
+    // del nombre del plan, usando el mismo precio + IGV que ve el usuario en
+    // el checkout. Si el plan no coincide con uno conocido, rechazamos —
+    // evita que alguien invente un plan con un monto arbitrario.
+    const serverAmount = computeSubscriptionAmount(plan);
+    if (serverAmount === null) {
+      return res.status(400).json({ error: "Plan no reconocido" });
+    }
+    if (typeof amount === "number" && Math.abs(amount - serverAmount) > 0.01) {
+      // No es necesariamente un ataque (podría ser un plan editado desde
+      // SuperAdmin sin actualizar este mapa), pero lo dejamos registrado
+      // en el log del servidor para poder revisarlo.
+      console.warn(
+        `[subscription-payments] Monto recibido (${amount}) no coincide con el calculado en servidor (${serverAmount}) para el plan "${plan}". Usando el monto del servidor.`
+      );
+    }
+
     const client = supabaseAdmin || getRequestSupabase(req);
     if (!client) return res.status(503).json({ error: "Supabase is not configured" });
 
@@ -933,7 +1167,7 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
       business_name: businessName,
       email: user.email || null,
       plan,
-      amount: Number(amount) || 0,
+      amount: serverAmount,
       payment_method: paymentMethod || null,
       reference: reference || null,
       status: "Pendiente",
@@ -1795,8 +2029,11 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
       const client = getRequestSupabase(req);
       if (!client) return res.status(503).json({ error: "Supabase is not configured" });
 
+      // Esta ruta es pública (visitantes sin cuenta), así que usamos las
+      // vistas *_public que excluyen datos sensibles (cuenta bancaria,
+      // estado de suscripción, costo/margen de productos).
       const { data: companyRow, error: companyError } = await client
-        .from("companies")
+        .from("companies_public")
         .select("*")
         .eq("slug", req.params.slug)
         .single();
@@ -1806,7 +2043,7 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
       }
 
       const { data: productRows, error: productsError } = await client
-        .from("products")
+        .from("products_public")
         .select("*")
         .eq("company_id", companyRow.id)
         .order("created_at", { ascending: false });
@@ -2166,8 +2403,17 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
       if (!client) return res.status(503).json({ error: "Supabase is not configured" });
       if (!companyId) return res.status(400).json({ error: "companyId required" });
 
+      // Esta ruta la usan tanto el dashboard autenticado (ProductsTab,
+      // InventoryTab, PosSystem — necesitan purchase_cost/margin_percent)
+      // como el catálogo público sin login (Catalog.tsx). apiClient solo
+      // manda el header Authorization cuando hay una sesión real, así que
+      // lo usamos para decidir si consultamos la tabla completa o la vista
+      // pública sin datos de costo/margen.
+      const isAuthenticatedRequest = Boolean(req.headers.authorization);
+      const sourceTable = isAuthenticatedRequest ? "products" : "products_public";
+
       let query = client
-        .from("products")
+        .from(sourceTable)
         .select("*", { count: "exact" })
         .eq("company_id", companyId)
         .order("created_at", { ascending: false });
