@@ -6,6 +6,7 @@ import { createServer as createViteServer } from "vite";
 import { Resend } from 'resend';
 import crypto from "crypto";
 import rateLimit from "express-rate-limit";
+import helmet from "helmet";
 
 const isProduction = process.env.NODE_ENV === "production";
 const requiredServerEnv = ["SUPABASE_URL", "SUPABASE_ANON_KEY"];
@@ -178,6 +179,18 @@ async function startServer() {
   const PORT = Number(process.env.PORT || 3000);
 
   app.use(express.json({ limit: '50mb' }));
+
+  // Headers de seguridad básicos (anti-clickjacking, anti-MIME-sniffing,
+  // HSTS, etc.). El Content-Security-Policy queda desactivado por ahora:
+  // el catálogo público inyecta Google Analytics / Meta Pixel por empresa
+  // (company.googleAnalyticsId, company.metaPixelId) y carga imágenes desde
+  // Supabase Storage — un CSP por defecto rompería eso en silencio. Hay que
+  // armar uno a medida (whitelist de dominios) y probarlo aparte, no
+  // activarlo a ciegas en un cambio que ya toca producción.
+  app.use(helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+  }));
 
   app.get("/health", (_req, res) => {
     res.json({
