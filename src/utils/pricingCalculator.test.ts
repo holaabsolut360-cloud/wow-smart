@@ -1,23 +1,27 @@
-import assert from 'node:assert/strict';
+import { describe, expect, it } from 'vitest';
 import { calculatePricing, resolveCatalogTaxRate, taxLabel } from './pricingCalculator';
 
-function run() {
-  const pricing = calculatePricing({ purchaseCost: 100, marginPercent: 30, taxRate: 18 });
-  assert.equal(pricing.profitAmount, 30);
-  assert.equal(pricing.netSalePrice, 130);
-  assert.equal(Number(pricing.finalPrice.toFixed(2)), 153.4);
+describe('pricingCalculator', () => {
+  it('calculates a price using margin and tax', () => {
+    const pricing = calculatePricing({ purchaseCost: 100, marginPercent: 30, taxRate: 18 });
+    expect(pricing.profitAmount).toBe(30);
+    expect(pricing.netSalePrice).toBe(130);
+    expect(Number(pricing.finalPrice.toFixed(2))).toBe(153.4);
+  });
 
-  const defaultPeruTax = resolveCatalogTaxRate({ companyCurrency: 'S/' });
-  assert.equal(defaultPeruTax, 18);
+  it('resolves the applicable catalog tax rate', () => {
+    const defaultPeruTax = resolveCatalogTaxRate({ companyCurrency: 'S/' });
+    expect(defaultPeruTax).toBe(18);
 
-  const customTax = resolveCatalogTaxRate({ productTaxRate: 10, companyTaxRate: 18, companyCurrency: 'S/' });
-  assert.equal(customTax, 10);
+    const customTax = resolveCatalogTaxRate({ productTaxRate: 10, companyTaxRate: 18, companyCurrency: 'S/' });
+    expect(customTax).toBe(10);
+  });
 
-  const peruLabel = taxLabel({ taxRate: 18, companyCountryCode: 'PE', companyCurrency: 'S/' });
-  assert.equal(peruLabel, '+ IGV 18%');
+  it('returns an appropriate tax label', () => {
+    const peruLabel = taxLabel({ taxRate: 18, companyCountryCode: 'PE', companyCurrency: 'S/' });
+    expect(peruLabel).toBe('+ IGV 18%');
 
-  const genericLabel = taxLabel({ taxRate: 20, companyCountryCode: 'US', companyCurrency: '$' });
-  assert.equal(genericLabel, '+ Impuesto 20%');
-}
-
-run();
+    const genericLabel = taxLabel({ taxRate: 20, companyCountryCode: 'US', companyCurrency: '$' });
+    expect(genericLabel).toBe('+ Impuesto 20%');
+  });
+});
