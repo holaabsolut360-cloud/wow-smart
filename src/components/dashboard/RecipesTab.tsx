@@ -15,7 +15,7 @@ export function RecipesTab({ company }: RecipesTabProps) {
   const [newIngredient, setNewIngredient] = useState<Partial<Ingredient>>({
     name: '',
     unit: 'kg',
-    costPerUnit: 0,
+    cost: 0,
     stock: 0,
   });
   
@@ -41,7 +41,7 @@ export function RecipesTab({ company }: RecipesTabProps) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ingredients'] });
       setIsAddingIngredient(false);
-      setNewIngredient({ name: '', unit: 'kg', costPerUnit: 0, stock: 0 });
+      setNewIngredient({ name: '', unit: 'kg', cost: 0, stock: 0 });
     }
   });
 
