@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Company, CRMDeal } from '../../types';
 import { apiClient } from '../../services/api';
-import { Plus, Pencil, Trash2, X } from 'lucide-react';
+import { Plus, Pencil, Trash2, X, Target, DollarSign, Trophy, Building2 } from 'lucide-react';
 
 interface CrmTabProps {
   company: Company | null;
@@ -38,15 +38,22 @@ export function CrmTab({ company }: CrmTabProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
 
-  const { data, isLoading } = useQuery({
+  const hasCompany = !!company?.id;
+
+  const { data, isLoading: isQueryLoading } = useQuery({
     queryKey: ['crmDeals', company?.id],
     queryFn: () => apiClient.get(`/api/crm-deals?companyId=${company?.id}`),
-    enabled: !!company?.id,
+    enabled: hasCompany,
   });
+
+  // isQueryLoading queda en `true` indefinidamente cuando enabled=false (sin company),
+  // así que solo lo consideramos "cargando" cuando realmente hay una empresa para consultar.
+  const isLoading = hasCompany && isQueryLoading;
 
   const deals: CRMDeal[] = data?.data || [];
   const pipelineValue = deals.reduce((sum, deal) => sum + (Number(deal.value) || 0), 0);
-  const wonDeals = deals.filter((deal) => deal.stage === 'Ganado').length;
+  const wonDeals = deals.filter((deal) => deal.stage === 'Ganado');
+  const wonValue = wonDeals.reduce((sum, deal) => sum + (Number(deal.value) || 0), 0);
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['crmDeals', company?.id] });
 
@@ -69,10 +76,23 @@ export function CrmTab({ company }: CrmTabProps) {
   });
 
   const moveStageMutation = useMutation({
-    mutationFn: ({ id, stage }: { id: string; stage: string }) => apiClient.put(`/api/crm-deals/${id}`, { stage }),
+    mutationFn: ({ id, stage, notes }: { id: string; stage: string; notes?: string }) =>
+      apiClient.put(`/api/crm-deals/${id}`, { stage, ...(notes !== undefined ? { notes } : {}) }),
     onSuccess: invalidate,
     onError: (err: any) => alert(err.message || 'No se pudo mover la oportunidad'),
   });
+
+  const handleStageChange = (deal: CRMDeal, newStage: string) => {
+    if (newStage === 'Perdido' && deal.stage !== 'Perdido') {
+      const reason = prompt('¿Motivo de la pérdida? (opcional, ayuda a tu analítica de ventas)');
+      const notes = reason?.trim()
+        ? `${deal.notes ? deal.notes + '\n' : ''}Motivo de pérdida: ${reason.trim()}`
+        : deal.notes;
+      moveStageMutation.mutate({ id: deal.id, stage: newStage, notes });
+      return;
+    }
+    moveStageMutation.mutate({ id: deal.id, stage: newStage });
+  };
 
   const closeModal = () => {
     setShowModal(false);
@@ -145,27 +165,68 @@ export function CrmTab({ company }: CrmTabProps) {
         </button>
       </header>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-8">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
         <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-          <p className="text-sm font-medium text-slate-500">Oportunidades</p>
-          <p className="text-2xl font-bold text-slate-900 mt-1">{deals.length}</p>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-sm font-medium text-slate-500">Oportunidades</p>
+            <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center">
+              <Target className="w-4 h-4 text-indigo-600" />
+            </div>
+          </div>
+          <p className="text-2xl font-bold text-slate-900">{deals.length}</p>
         </div>
         <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-          <p className="text-sm font-medium text-slate-500">Valor del Pipeline</p>
-          <p className="text-2xl font-bold text-slate-900 mt-1">{formatMoney(pipelineValue, currency)}</p>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-sm font-medium text-slate-500">Valor del Pipeline</p>
+            <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center">
+              <DollarSign className="w-4 h-4 text-blue-600" />
+            </div>
+          </div>
+          <p className="text-2xl font-bold text-slate-900">{formatMoney(pipelineValue, currency)}</p>
         </div>
         <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-          <p className="text-sm font-medium text-slate-500">Negocios Ganados</p>
-          <p className="text-2xl font-bold text-slate-900 mt-1">{wonDeals}</p>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-sm font-medium text-slate-500">Negocios Ganados</p>
+            <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center">
+              <Trophy className="w-4 h-4 text-emerald-600" />
+            </div>
+          </div>
+          <p className="text-2xl font-bold text-slate-900">{wonDeals.length}</p>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-sm font-medium text-slate-500">Valor Ganado</p>
+            <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center">
+              <DollarSign className="w-4 h-4 text-emerald-600" />
+            </div>
+          </div>
+          <p className="text-2xl font-bold text-slate-900">{formatMoney(wonValue, currency)}</p>
         </div>
       </div>
 
-      {isLoading ? (
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 text-center text-slate-500">
-          Cargando oportunidades...
+      {!hasCompany ? (
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-10 text-center">
+          <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center mx-auto mb-3">
+            <Building2 className="w-6 h-6 text-slate-400" />
+          </div>
+          <p className="text-slate-700 font-semibold">Selecciona una empresa para ver su CRM</p>
+          <p className="text-slate-500 text-sm mt-2">El pipeline de oportunidades se carga por empresa.</p>
+        </div>
+      ) : isLoading ? (
+        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
+          {STAGES.map(stage => (
+            <div key={stage} className="bg-slate-50 rounded-2xl border border-slate-200 p-4 animate-pulse">
+              <div className="h-4 w-20 bg-slate-200 rounded-full mb-3" />
+              <div className="h-3 w-14 bg-slate-200 rounded mb-4" />
+              <div className="h-20 bg-slate-200 rounded-xl" />
+            </div>
+          ))}
         </div>
       ) : deals.length === 0 ? (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-10 text-center">
+          <div className="w-12 h-12 rounded-full bg-indigo-50 flex items-center justify-center mx-auto mb-3">
+            <Target className="w-6 h-6 text-indigo-500" />
+          </div>
           <p className="text-slate-700 font-semibold">Aún no tienes oportunidades CRM registradas.</p>
           <p className="text-slate-500 text-sm mt-2 mb-4">Registra prospectos y negocios en curso para darles seguimiento.</p>
           <button onClick={openNewModal} className="inline-flex items-center gap-2 bg-indigo-600 text-white font-bold px-4 py-2.5 rounded-xl hover:bg-indigo-700 transition-colors">
@@ -195,10 +256,10 @@ export function CrmTab({ company }: CrmTabProps) {
                       <div className="flex items-start justify-between gap-2 mb-1">
                         <p className="font-bold text-slate-800 text-sm leading-tight">{deal.title}</p>
                         <div className="flex gap-1 flex-shrink-0">
-                          <button onClick={() => openEditModal(deal)} className="text-slate-400 hover:text-indigo-600 transition-colors">
+                          <button onClick={() => openEditModal(deal)} aria-label={`Editar ${deal.title}`} className="text-slate-400 hover:text-indigo-600 transition-colors">
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
-                          <button onClick={() => handleDelete(deal.id)} className="text-slate-400 hover:text-rose-600 transition-colors">
+                          <button onClick={() => handleDelete(deal.id)} aria-label={`Eliminar ${deal.title}`} className="text-slate-400 hover:text-rose-600 transition-colors">
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
@@ -207,7 +268,7 @@ export function CrmTab({ company }: CrmTabProps) {
                       <p className="text-sm font-bold text-slate-900 mb-3">{formatMoney(Number(deal.value) || 0, currency)}</p>
                       <select
                         value={deal.stage}
-                        onChange={e => moveStageMutation.mutate({ id: deal.id, stage: e.target.value })}
+                        onChange={e => handleStageChange(deal, e.target.value)}
                         className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-indigo-500 bg-slate-50"
                       >
                         {STAGES.map(s => <option key={s} value={s}>{s}</option>)}
