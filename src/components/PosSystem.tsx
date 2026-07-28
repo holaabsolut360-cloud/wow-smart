@@ -92,8 +92,8 @@ export function PosSystem({ companyId, company }: PosSystemProps) {
 
 
   const categories = useMemo(() => {
-    const cats = new Set(products.map(p => p.category).filter(Boolean));
-    return Array.from(cats);
+    const cats = new Set(products.map((p: Product) => p.category).filter(Boolean));
+    return Array.from(cats) as string[];
   }, [products]);
 
   const addToCart = (product: Product) => {
