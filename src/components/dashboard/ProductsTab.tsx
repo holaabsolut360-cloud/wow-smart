@@ -3,7 +3,8 @@ import React, { useMemo, useState } from 'react';
 import { motion } from 'motion/react';
 import { ExternalLink, Plus, Trash2, Edit2, Lock, ArrowRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import * as XLSX from 'xlsx';
+import { readSheet } from 'read-excel-file/browser';
+import Papa from 'papaparse';
 import { Company, Product, Category } from '../../types';
 import { ImageUpload } from '../ImageUpload';
 import { apiClient } from "../../services/api";
@@ -132,11 +133,45 @@ export function ProductsTab({ company, categories }: ProductsTabProps) {
     setIsImporting(true);
 
     try {
-      const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: 'array' });
-      const firstSheetName = workbook.SheetNames[0];
-      const worksheet = workbook.Sheets[firstSheetName];
-      const rows = XLSX.utils.sheet_to_json<Record<string, any>>(worksheet, { defval: '' });
+      const fileName = file.name.toLowerCase();
+      let rows: Record<string, any>[];
+
+      if (fileName.endsWith('.csv')) {
+        const text = await file.text();
+        const parsed = Papa.parse<Record<string, any>>(text, { header: true, skipEmptyLines: true });
+        rows = parsed.data;
+      } else if (fileName.endsWith('.xlsx')) {
+        // read-excel-file devuelve filas como arrays (no objetos con
+        // headers como nombre de propiedad, a diferencia de la librería
+        // xlsx anterior). Reconstruimos esa misma forma de objeto por
+        // fila, usando la primera fila como encabezados, para que
+        // getField() siga funcionando exactamente igual que antes sin
+        // tocar el resto de la lógica de importación.
+        const buffer = await file.arrayBuffer();
+        const sheetRows = await readSheet(new Blob([buffer]));
+
+        if (!sheetRows.length) {
+          throw new Error('El archivo no contiene filas con datos.');
+        }
+
+        const [headerRow, ...dataRows] = sheetRows;
+        const headers = headerRow.map(h => String(h ?? '').trim());
+        rows = dataRows
+          .filter(r => r.some(cell => cell !== null && cell !== undefined && String(cell).trim() !== ''))
+          .map(r => {
+            const obj: Record<string, any> = {};
+            headers.forEach((header, i) => {
+              if (header) obj[header] = r[i];
+            });
+            return obj;
+          });
+      } else {
+        // .xls (formato binario antiguo, anterior a Excel 2007) ya no
+        // tiene una librería de lectura mantenida y libre de
+        // vulnerabilidades conocidas para uso en navegador. Se pide
+        // reexportar en un formato moderno en vez de fallar en silencio.
+        throw new Error('El formato .xls (Excel 97-2003) ya no es compatible. Vuelve a guardar el archivo como .xlsx o .csv desde Excel/Google Sheets e inténtalo de nuevo.');
+      }
 
       if (!rows.length) {
         throw new Error('El archivo no contiene filas con datos.');
