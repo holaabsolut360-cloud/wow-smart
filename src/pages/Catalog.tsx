@@ -73,6 +73,9 @@ export default function Catalog() {
   const [qty, setQty] = useState(1);
   const [selectedVariants, setSelectedVariants] = useState<Record<string, string>>({});
 
+  // Cotización corporativa por mayor (formulario dentro del modal de producto)
+  const [bulkQuoteForm, setBulkQuoteForm] = useState({ quantity: '', contactName: '', companyName: '', ruc: '', message: '' });
+
   // Delivery & Coupons
   const [deliveryMethod, setDeliveryMethod] = useState<'delivery' | 'pickup'>('delivery');
   const [deliveryData, setDeliveryData] = useState({ address: '', reference: '', recipient: '', phone: '' });
@@ -346,6 +349,29 @@ export default function Catalog() {
     }
 
     window.open(`https://wa.me/${company.whatsapp}?text=${encodeURIComponent(msg)}`, "_blank");
+  };
+
+  const sendBulkQuoteToWhatsApp = () => {
+    if (!company?.whatsapp) {
+      alert("Esta empresa no tiene un número de WhatsApp configurado.");
+      return;
+    }
+    if (!bulkQuoteForm.contactName.trim()) {
+      alert("Por favor completa tu nombre de contacto.");
+      return;
+    }
+    if (!selectedProduct) return;
+
+    let msg = `*COTIZACIÓN CORPORATIVA POR MAYOR - ${company.name}*\n\n`;
+    msg += `Producto: ${selectedProduct.name}\n`;
+    if (bulkQuoteForm.quantity) msg += `Cantidad aproximada: ${bulkQuoteForm.quantity}\n`;
+    msg += `Contacto: ${bulkQuoteForm.contactName}\n`;
+    if (bulkQuoteForm.companyName) msg += `Empresa: ${bulkQuoteForm.companyName}\n`;
+    if (bulkQuoteForm.ruc) msg += `RUC: ${bulkQuoteForm.ruc}\n`;
+    if (bulkQuoteForm.message) msg += `\nMensaje adicional:\n${bulkQuoteForm.message}\n`;
+
+    window.open(`https://wa.me/${company.whatsapp}?text=${encodeURIComponent(msg)}`, "_blank");
+    setBulkQuoteForm({ quantity: '', contactName: '', companyName: '', ruc: '', message: '' });
   };
 
   return (
@@ -1089,22 +1115,22 @@ export default function Catalog() {
                   <div className="w-full border-t border-slate-200"></div>
                 </div>
                 <div className="relative flex justify-center">
-                  <span className="bg-white px-3 text-xs text-slate-400">¿Prefieres cotizar con factura?</span>
+                  <span className="bg-white px-3 text-xs text-slate-400">¿Prefieres una cotización corporativa por mayor?</span>
                 </div>
               </div>
 
               <div className="mt-6 space-y-3">
                 <div className="flex gap-3">
-                  <input type="number" placeholder="Ej: 100" className="w-1/3 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-slate-300" />
-                  <input type="text" placeholder="Nombre de Contacto" className="w-2/3 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-slate-300" />
+                  <input type="number" min="1" value={bulkQuoteForm.quantity} onChange={e => setBulkQuoteForm({ ...bulkQuoteForm, quantity: e.target.value })} placeholder="Ej: 100" className="w-1/3 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-slate-300" />
+                  <input type="text" value={bulkQuoteForm.contactName} onChange={e => setBulkQuoteForm({ ...bulkQuoteForm, contactName: e.target.value })} placeholder="Nombre de Contacto" className="w-2/3 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-slate-300" />
                 </div>
                 <div className="flex gap-3">
-                  <input type="text" placeholder="Empresa SAC" className="w-1/2 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-slate-300" />
-                  <input type="text" placeholder="RUC" className="w-1/2 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-slate-300" />
+                  <input type="text" value={bulkQuoteForm.companyName} onChange={e => setBulkQuoteForm({ ...bulkQuoteForm, companyName: e.target.value })} placeholder="Empresa SAC" className="w-1/2 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-slate-300" />
+                  <input type="text" value={bulkQuoteForm.ruc} onChange={e => setBulkQuoteForm({ ...bulkQuoteForm, ruc: e.target.value })} placeholder="RUC" className="w-1/2 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-slate-300" />
                 </div>
-                <textarea placeholder="Mensaje adicional (Color, logo, detalle...)" rows={2} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-slate-300"></textarea>
+                <textarea value={bulkQuoteForm.message} onChange={e => setBulkQuoteForm({ ...bulkQuoteForm, message: e.target.value })} placeholder="Mensaje adicional (Color, logo, detalle...)" rows={2} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-slate-300"></textarea>
                 
-                <button className="w-full py-3 rounded-xl bg-[#25D366] text-white font-bold hover:bg-[#20bd5a] transition-colors shadow-sm flex items-center justify-center gap-2">
+                <button onClick={sendBulkQuoteToWhatsApp} className="w-full py-3 rounded-xl bg-[#25D366] text-white font-bold hover:bg-[#20bd5a] transition-colors shadow-sm flex items-center justify-center gap-2">
                   <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
                   Enviar consulta por WhatsApp
                 </button>
