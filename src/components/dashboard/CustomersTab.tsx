@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'motion/react';
-import { PlusCircle, Trash2 } from 'lucide-react';
+import { PlusCircle, Trash2, Upload } from 'lucide-react';
 import { Company, Customer } from '../../types';
 import { Download } from 'lucide-react';
 import { exportToCSV } from '../../utils/exportToCSV';
 import { apiClient } from "../../services/api";
+import { readSheet } from 'read-excel-file/browser';
+import Papa from 'papaparse';
 
 interface CustomersTabProps {
   company: Company | null;
@@ -18,6 +20,10 @@ export function CustomersTab({ company }: CustomersTabProps) {
   
   const [isAddingCustomer, setIsAddingCustomer] = useState(false);
   const [newCustomer, setNewCustomer] = useState<Partial<Customer>>({});
+
+  const [isImporting, setIsImporting] = useState(false);
+  const [importMessage, setImportMessage] = useState('');
+  const [importError, setImportError] = useState('');
 
   const { data: customersData, isLoading } = useQuery({
     queryKey: ['customers', company?.id, page],
@@ -65,6 +71,122 @@ export function CustomersTab({ company }: CustomersTabProps) {
     addMutation.mutate(newCustomer);
   };
 
+  // Mismo patrón seguro que ProductsTab.tsx: lectura 100% en el navegador
+  // con read-excel-file (.xlsx) y papaparse (.csv) — sin la librería xlsx,
+  // que tenía vulnerabilidades sin parche. El archivo nunca se sube a
+  // ningún servidor ni se guarda en ningún lado: se lee, se convierte en
+  // filas de datos, y esas filas van directo a /api/customers, que ya
+  // exige sesión iniciada y aísla los datos por empresa (RLS) — ninguna
+  // otra empresa puede ver estos clientes, ni existe un "archivo" que
+  // proteger después de la carga.
+  const normalizeHeader = (value: string) =>
+    value
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/\s+/g, '_')
+      .trim();
+
+  const getField = (row: Record<string, any>, keys: string[]) => {
+    for (const key of Object.keys(row)) {
+      if (keys.includes(normalizeHeader(key))) return row[key];
+    }
+    return undefined;
+  };
+
+  const handleBulkImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !company?.id) return;
+
+    setImportError('');
+    setImportMessage('');
+    setIsImporting(true);
+
+    try {
+      const fileName = file.name.toLowerCase();
+      let rows: Record<string, any>[];
+
+      if (fileName.endsWith('.csv')) {
+        const text = await file.text();
+        const parsed = Papa.parse<Record<string, any>>(text, { header: true, skipEmptyLines: true });
+        rows = parsed.data;
+      } else if (fileName.endsWith('.xlsx')) {
+        const buffer = await file.arrayBuffer();
+        const sheetRows = await readSheet(new Blob([buffer]));
+
+        if (!sheetRows.length) {
+          throw new Error('El archivo no contiene filas con datos.');
+        }
+
+        const [headerRow, ...dataRows] = sheetRows;
+        const headers = headerRow.map(h => String(h ?? '').trim());
+        rows = dataRows
+          .filter(r => r.some(cell => cell !== null && cell !== undefined && String(cell).trim() !== ''))
+          .map(r => {
+            const obj: Record<string, any> = {};
+            headers.forEach((header, i) => {
+              if (header) obj[header] = r[i];
+            });
+            return obj;
+          });
+      } else {
+        throw new Error('El formato .xls (Excel 97-2003) ya no es compatible. Vuelve a guardar el archivo como .xlsx o .csv desde Excel/Google Sheets e inténtalo de nuevo.');
+      }
+
+      if (!rows.length) {
+        throw new Error('El archivo no contiene filas con datos.');
+      }
+
+      const parsedCustomers: Partial<Customer>[] = [];
+      let skipped = 0;
+
+      for (const row of rows) {
+        const name = String(getField(row, ['nombre', 'nombre_completo', 'name', 'cliente']) || '').trim();
+        if (!name) {
+          skipped += 1;
+          continue;
+        }
+
+        parsedCustomers.push({
+          name,
+          phone: String(getField(row, ['telefono', 'teléfono', 'phone', 'celular', 'whatsapp']) || '').trim() || undefined,
+          email: String(getField(row, ['email', 'correo', 'correo_electronico']) || '').trim() || undefined,
+          address: String(getField(row, ['direccion', 'dirección', 'address']) || '').trim() || undefined,
+          documentNumber: String(getField(row, ['dni', 'ruc', 'dni_ruc', 'documentnumber', 'documento']) || '').trim() || undefined,
+          notes: String(getField(row, ['notas', 'notes', 'observaciones']) || '').trim() || undefined,
+        });
+      }
+
+      if (!parsedCustomers.length) {
+        throw new Error('No se encontraron clientes válidos. Asegúrate de incluir una columna de nombre.');
+      }
+
+      const results = await Promise.allSettled(
+        parsedCustomers.map((customer) =>
+          apiClient.post('/api/customers', {
+            ...customer,
+            companyId: company.id,
+            createdAt: new Date().toISOString(),
+          }),
+        ),
+      );
+
+      const successCount = results.filter((result) => result.status === 'fulfilled').length;
+      const failCount = results.length - successCount;
+
+      queryClient.invalidateQueries({ queryKey: ['customers', company?.id] });
+
+      setImportMessage(
+        `Importación completada: ${successCount} cliente(s) creados${skipped ? `, ${skipped} fila(s) omitidas por no tener nombre` : ''}${failCount ? `, ${failCount} fallidas` : ''}.`,
+      );
+    } catch (err: any) {
+      setImportError(err.message || 'No se pudo procesar el archivo.');
+    } finally {
+      setIsImporting(false);
+      e.target.value = '';
+    }
+  };
+
   return (
     <>
       {isLoading ? (
@@ -98,6 +220,16 @@ export function CustomersTab({ company }: CustomersTabProps) {
                 >
                   <Download className="w-4 h-4" /> CSV
                 </button>
+                <label className="bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 px-4 py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-sm cursor-pointer">
+                  <input
+                    type="file"
+                    accept=".csv,.xlsx,.xls"
+                    onChange={handleBulkImport}
+                    className="hidden"
+                    disabled={isImporting}
+                  />
+                  <Upload className="w-4 h-4" /> {isImporting ? 'Importando...' : 'Importar Excel/CSV'}
+                </label>
                 <button 
                   onClick={() => setIsAddingCustomer(true)}
                   className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-sm"
@@ -106,6 +238,12 @@ export function CustomersTab({ company }: CustomersTabProps) {
                 </button>
               </div>
             </header>
+
+            {(importMessage || importError) && (
+              <div className={`mb-6 p-4 rounded-xl border ${importError ? 'bg-rose-50 border-rose-200 text-rose-700' : 'bg-emerald-50 border-emerald-200 text-emerald-700'}`}>
+                {importError || importMessage}
+              </div>
+            )}
 
             {isAddingCustomer && (
               <motion.div initial={{opacity: 0, y: -10}} animate={{opacity: 1, y: 0}} className="mb-8 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
