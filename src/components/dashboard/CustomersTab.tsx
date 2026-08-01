@@ -22,7 +22,8 @@ export function CustomersTab({ company }: CustomersTabProps) {
 
   // Nuevos estados para controlar la carga y el progreso
   const [isImporting, setIsImporting] = useState(false);
-  const [importProgress, setImportProgress] = useState(0); 
+  const [importProgress, setImportProgress] = useState(0);
+  const [importDetail, setImportDetail] = useState('');
   const [importMessage, setImportMessage] = useState('');
   const [importError, setImportError] = useState('');
 
@@ -76,8 +77,9 @@ export function CustomersTab({ company }: CustomersTabProps) {
     value
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
+      .replace(/^\uFEFF/, '')
       .toLowerCase()
-      .replace(/\s+/g, '_')
+      .replace(/[\s-]+/g, '_')
       .trim();
 
   const getField = (row: Record<string, any>, keys: string[]) => {
@@ -94,7 +96,8 @@ export function CustomersTab({ company }: CustomersTabProps) {
     setImportError('');
     setImportMessage('');
     setIsImporting(true);
-    setImportProgress(0); // Reinicia la barra de progreso
+    setImportProgress(5);
+    setImportDetail(`Leyendo ${file.name}...`);
 
     try {
       const fileName = file.name.toLowerCase();
@@ -103,10 +106,12 @@ export function CustomersTab({ company }: CustomersTabProps) {
       if (fileName.endsWith('.csv')) {
         const text = await file.text();
         const parsed = Papa.parse<Record<string, any>>(text, { header: true, skipEmptyLines: true });
+        if (parsed.errors.length) {
+          throw new Error(`No se pudo leer el CSV: ${parsed.errors[0].message}`);
+        }
         rows = parsed.data;
       } else if (fileName.endsWith('.xlsx')) {
-        const buffer = await file.arrayBuffer();
-        const sheetRows = await readSheet(new Blob([buffer]));
+        const sheetRows = await readSheet(file);
 
         if (!sheetRows.length) {
           throw new Error('El archivo no contiene filas con datos.');
@@ -114,13 +119,17 @@ export function CustomersTab({ company }: CustomersTabProps) {
 
         // LÓGICA INTELIGENTE: Buscar la fila real de cabeceras 
         // (Ignora los textos legales de la Cámara de Comercio en las primeras filas)
-        let headerIndex = 0;
+        let headerIndex = -1;
         for (let i = 0; i < Math.min(10, sheetRows.length); i++) {
           const rowStr = sheetRows[i].map(c => String(c || '').toLowerCase()).join(' ');
           if (rowStr.includes('nombre') || rowStr.includes('cliente') || rowStr.includes('ruc')) {
             headerIndex = i;
             break;
           }
+        }
+
+        if (headerIndex === -1) {
+          throw new Error('No se encontró una fila de encabezados. El Excel debe incluir una columna Nombre, Cliente o RUC.');
         }
 
         const headerRow = sheetRows[headerIndex];
@@ -136,6 +145,8 @@ export function CustomersTab({ company }: CustomersTabProps) {
             });
             return obj;
           });
+      } else if (fileName.endsWith('.xls')) {
+        throw new Error('El formato .xls (Excel 97-2003) no es compatible. Guarda el archivo como .xlsx o .csv desde Excel o Google Sheets e inténtalo nuevamente.');
       } else {
         throw new Error('Formato inválido. Usa .xlsx o .csv.');
       }
@@ -169,6 +180,9 @@ export function CustomersTab({ company }: CustomersTabProps) {
         throw new Error('No se encontraron clientes válidos. Asegúrate de incluir una columna de nombre.');
       }
 
+      setImportProgress(10);
+      setImportDetail(`${parsedCustomers.length} cliente${parsedCustomers.length === 1 ? '' : 's'} listo${parsedCustomers.length === 1 ? '' : 's'} para importar.`);
+
       // SUBIDA POR LOTES CON ACTUALIZACIÓN DE PROGRESO VISUAL
       let successCount = 0;
       let failCount = 0;
@@ -192,23 +206,22 @@ export function CustomersTab({ company }: CustomersTabProps) {
         failCount += results.filter((r) => r.status === 'rejected').length;
         
         // Calcular y actualizar el porcentaje
-        const currentProgress = Math.round(((i + batch.length) / total) * 100);
+        const currentProgress = 10 + Math.round(((i + batch.length) / total) * 90);
         setImportProgress(currentProgress > 100 ? 100 : currentProgress);
+        setImportDetail(`Guardando clientes: ${Math.min(i + batch.length, total)} de ${total}.`);
       }
 
       queryClient.invalidateQueries({ queryKey: ['customers', company?.id] });
 
       setImportMessage(
-        `Importación completada: ${successCount} empresa(s) creadas${skipped ? `, ${skipped} omitidas` : ''}${failCount ? `, ${failCount} fallidas` : ''}.`
+        `Importación completada: ${successCount} cliente${successCount === 1 ? '' : 's'} creado${successCount === 1 ? '' : 's'}${skipped ? `, ${skipped} omitido${skipped === 1 ? '' : 's'}` : ''}${failCount ? `, ${failCount} fallido${failCount === 1 ? '' : 's'}` : ''}.`
       );
     } catch (err: any) {
       setImportError(err.message || 'No se pudo procesar el archivo.');
     } finally {
-      // Mantiene la barra en 100% un segundo antes de desaparecer
-      setTimeout(() => {
-        setIsImporting(false);
-        setImportProgress(0);
-      }, 1500);
+      setIsImporting(false);
+      setImportProgress(0);
+      setImportDetail('');
       e.target.value = '';
     }
   };
@@ -249,12 +262,12 @@ export function CustomersTab({ company }: CustomersTabProps) {
                 <label className="bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 px-4 py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-sm cursor-pointer">
                   <input
                     type="file"
-                    accept=".csv,.xlsx,.xls"
+                    accept=".csv,.xlsx"
                     onChange={handleBulkImport}
                     className="hidden"
                     disabled={isImporting}
                   />
-                  <Upload className="w-4 h-4" /> {isImporting ? 'Importando...' : 'Importar Excel/CSV'}
+                  <Upload className="w-4 h-4" /> {isImporting ? 'Importando...' : 'Importar Excel (.xlsx) / CSV'}
                 </label>
                 <button 
                   onClick={() => setIsAddingCustomer(true)}
@@ -280,6 +293,7 @@ export function CustomersTab({ company }: CustomersTabProps) {
                     <div className="absolute inset-0 bg-white/20 w-full animate-[shimmer_1s_infinite] -translate-x-full"></div>
                   </div>
                 </div>
+                <p className="mt-3 text-sm text-slate-600" aria-live="polite">{importDetail}</p>
               </motion.div>
             )}
 
