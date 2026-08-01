@@ -7,10 +7,7 @@ vi.mock('../../src/services/api', () => ({
   apiClient: { get: vi.fn(), post: vi.fn(), delete: vi.fn() },
 }));
 
-vi.mock('read-excel-file/browser', () => ({ readSheet: vi.fn() }));
-
 import { apiClient } from '../../src/services/api';
-import { readSheet } from 'read-excel-file/browser';
 import { CustomersTab } from '../../src/components/dashboard/CustomersTab';
 import type { Company } from '../../src/types';
 
@@ -28,16 +25,11 @@ describe('CustomersTab import', () => {
   beforeEach(() => {
     vi.mocked(apiClient.get).mockReset();
     vi.mocked(apiClient.post).mockReset();
-    vi.mocked(readSheet).mockReset();
     vi.mocked(apiClient.get).mockResolvedValue({ data: [], total: 0, totalPages: 0 });
-    vi.mocked(apiClient.post).mockResolvedValue({});
+    vi.mocked(apiClient.post).mockResolvedValue({ created: 1 });
   });
 
   it('reads an XLSX file and imports its customer rows', async () => {
-    vi.mocked(readSheet).mockResolvedValue([
-      ['Nombre', 'Teléfono', 'Correo'],
-      ['Ana Pérez', '999888777', 'ana@example.com'],
-    ] as any);
     const { container } = renderCustomers();
     await screen.findByText('Directorio de Clientes');
     const input = container.querySelector('input[type="file"]');
@@ -46,9 +38,8 @@ describe('CustomersTab import', () => {
     fireEvent.change(input!, { target: { files: [new File(['content'], 'clientes.xlsx')] } });
 
     expect(await screen.findByText(/Importación completada: 1 cliente creado/i)).toBeTruthy();
-    expect(readSheet).toHaveBeenCalledOnce();
-    expect(apiClient.post).toHaveBeenCalledWith('/api/customers', expect.objectContaining({
-      companyId: 'company-1', name: 'Ana Pérez', phone: '999888777', email: 'ana@example.com',
+    expect(apiClient.post).toHaveBeenCalledWith('/api/customers/import-file', expect.objectContaining({
+      companyId: 'company-1', fileName: 'clientes.xlsx', contentBase64: expect.any(String),
     }));
   });
 

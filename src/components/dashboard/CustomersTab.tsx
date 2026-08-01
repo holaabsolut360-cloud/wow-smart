@@ -5,12 +5,21 @@ import { PlusCircle, Trash2, Upload, Download } from 'lucide-react';
 import { Company, Customer } from '../../types';
 import { exportToCSV } from '../../utils/exportToCSV';
 import { apiClient } from "../../services/api";
-import { readSheet } from 'read-excel-file/browser';
 import Papa from 'papaparse';
 
 interface CustomersTabProps {
   company: Company | null;
 }
+
+const fileToBase64 = (file: File) => new Promise<string>((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onerror = () => reject(new Error('No se pudo leer el archivo seleccionado.'));
+  reader.onload = () => {
+    const value = String(reader.result || '');
+    resolve(value.includes(',') ? value.slice(value.indexOf(',') + 1) : value);
+  };
+  reader.readAsDataURL(file);
+});
 
 export function CustomersTab({ company }: CustomersTabProps) {
   const queryClient = useQueryClient();
@@ -111,40 +120,22 @@ export function CustomersTab({ company }: CustomersTabProps) {
         }
         rows = parsed.data;
       } else if (fileName.endsWith('.xlsx')) {
-        const sheetRows = await readSheet(file);
-
-        if (!sheetRows.length) {
-          throw new Error('El archivo no contiene filas con datos.');
-        }
-
-        // LÓGICA INTELIGENTE: Buscar la fila real de cabeceras 
-        // (Ignora los textos legales de la Cámara de Comercio en las primeras filas)
-        let headerIndex = -1;
-        for (let i = 0; i < Math.min(10, sheetRows.length); i++) {
-          const rowStr = sheetRows[i].map(c => String(c || '').toLowerCase()).join(' ');
-          if (rowStr.includes('nombre') || rowStr.includes('cliente') || rowStr.includes('ruc')) {
-            headerIndex = i;
-            break;
-          }
-        }
-
-        if (headerIndex === -1) {
-          throw new Error('No se encontró una fila de encabezados. El Excel debe incluir una columna Nombre, Cliente o RUC.');
-        }
-
-        const headerRow = sheetRows[headerIndex];
-        const dataRows = sheetRows.slice(headerIndex + 1);
-        
-        const headers = headerRow.map(h => String(h ?? '').trim());
-        rows = dataRows
-          .filter(r => r.some(cell => cell !== null && cell !== undefined && String(cell).trim() !== ''))
-          .map(r => {
-            const obj: Record<string, any> = {};
-            headers.forEach((header, i) => {
-              if (header) obj[header] = r[i];
-            });
-            return obj;
-          });
+        setImportProgress(15);
+        setImportDetail('Enviando el Excel al servidor para procesarlo en lotes...');
+        const result = await apiClient.post('/api/customers/import-file', {
+          companyId: company.id,
+          fileName: file.name,
+          contentBase64: await fileToBase64(file),
+        });
+        const created = Number(result?.created || 0);
+        const skipped = Number(result?.skipped || 0);
+        setImportProgress(100);
+        setImportDetail(`Base de datos procesada: ${created} clientes guardados.`);
+        queryClient.invalidateQueries({ queryKey: ['customers', company.id] });
+        setImportMessage(
+          `Importación completada: ${created} cliente${created === 1 ? '' : 's'} creado${created === 1 ? '' : 's'}${skipped ? `, ${skipped} omitido${skipped === 1 ? '' : 's'}` : ''}.`
+        );
+        return;
       } else if (fileName.endsWith('.xls')) {
         throw new Error('El formato .xls (Excel 97-2003) no es compatible. Guarda el archivo como .xlsx o .csv desde Excel o Google Sheets e inténtalo nuevamente.');
       } else {
@@ -187,23 +178,21 @@ export function CustomersTab({ company }: CustomersTabProps) {
       let successCount = 0;
       let failCount = 0;
       const total = parsedCustomers.length;
-      const batchSize = 15; // Sube de 15 en 15 para no saturar el navegador
+      const batchSize = 500;
       
       for (let i = 0; i < total; i += batchSize) {
         const batch = parsedCustomers.slice(i, i + batchSize);
         
-        const results = await Promise.allSettled(
-          batch.map((customer) =>
-            apiClient.post('/api/customers', {
-              ...customer,
-              companyId: company.id,
-              createdAt: new Date().toISOString(),
-            })
-          )
-        );
-
-        successCount += results.filter((r) => r.status === 'fulfilled').length;
-        failCount += results.filter((r) => r.status === 'rejected').length;
+        try {
+          const result = await apiClient.post('/api/customers/import', {
+            companyId: company.id,
+            customers: batch,
+          });
+          successCount += Number(result?.created || 0);
+          failCount += batch.length - Number(result?.created || 0);
+        } catch {
+          failCount += batch.length;
+        }
         
         // Calcular y actualizar el porcentaje
         const currentProgress = 10 + Math.round(((i + batch.length) / total) * 90);

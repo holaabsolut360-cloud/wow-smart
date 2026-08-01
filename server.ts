@@ -5,6 +5,7 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { Resend } from 'resend';
 import crypto from "crypto";
+import { readSheet as readExcelSheet } from "read-excel-file/node";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 
@@ -3100,6 +3101,147 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     db.customers.unshift(newCustomer);
     addAuditLog(newCustomer.companyId, "CREAR", "Clientes", `Cliente '${newCustomer.name}' registrado en directorio`);
     res.json(newCustomer);
+  });
+
+  // Import customers in batches. This avoids thousands of individual browser requests
+  // when a business imports a real customer database from Excel or CSV.
+  app.post("/api/customers/import", async (req, res) => {
+    const companyId = req.body?.companyId;
+    const customers = Array.isArray(req.body?.customers) ? req.body.customers : [];
+
+    if (!companyId) return res.status(400).json({ error: "companyId is required" });
+    if (customers.length === 0) return res.status(400).json({ error: "At least one customer is required" });
+    if (customers.length > 500) return res.status(400).json({ error: "A maximum of 500 customers can be imported per batch" });
+
+    const validCustomers = customers
+      .filter((customer: any) => typeof customer?.name === 'string' && customer.name.trim())
+      .map((customer: any) => ({ ...customer, companyId, name: customer.name.trim() }));
+
+    if (validCustomers.length === 0) {
+      return res.status(400).json({ error: "No valid customers were provided" });
+    }
+
+    if (useSupabaseDb) {
+      const client = getRequestSupabase(req);
+      if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+      const payload = validCustomers.map((customer: any) => stripUndefined(fromCustomer(customer)));
+      const { data, error } = await client
+        .from("customers")
+        .insert(payload)
+        .select("id");
+
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json({ created: data?.length || 0 });
+    }
+
+    const created = validCustomers.map((customer: any, index: number) => ({
+      id: `${Date.now()}-${index}`,
+      ...customer,
+    }));
+    db.customers.unshift(...created);
+    addAuditLog(companyId, "CREAR", "Clientes", `${created.length} clientes importados al directorio`);
+    return res.json({ created: created.length });
+  });
+
+  // Parse XLSX files on the server, where large workbooks don't freeze the
+  // browser. The file is imported in database batches after it is parsed.
+  app.post("/api/customers/import-file", async (req, res) => {
+    const { companyId, fileName, contentBase64 } = req.body || {};
+    if (!companyId || typeof fileName !== 'string' || typeof contentBase64 !== 'string') {
+      return res.status(400).json({ error: "companyId, fileName and contentBase64 are required" });
+    }
+    if (!fileName.toLowerCase().endsWith('.xlsx')) {
+      return res.status(400).json({ error: "Only .xlsx files can be imported through this endpoint" });
+    }
+
+    const buffer = Buffer.from(contentBase64, 'base64');
+    if (buffer.length === 0) return res.status(400).json({ error: "The uploaded file is empty" });
+    if (buffer.length > 20 * 1024 * 1024) {
+      return res.status(413).json({ error: "The Excel file exceeds the 20 MB import limit" });
+    }
+
+    let sheetRows: any[][];
+    try {
+      sheetRows = await readExcelSheet(buffer);
+    } catch {
+      return res.status(400).json({ error: "The Excel file could not be read. Export it again as .xlsx and try once more." });
+    }
+
+    let headerIndex = -1;
+    for (let index = 0; index < Math.min(10, sheetRows.length); index += 1) {
+      const rowText = sheetRows[index].map(cell => String(cell || '').toLowerCase()).join(' ');
+      if (rowText.includes('nombre') || rowText.includes('cliente') || rowText.includes('ruc')) {
+        headerIndex = index;
+        break;
+      }
+    }
+    if (headerIndex === -1) {
+      return res.status(400).json({ error: "No header row was found. Include a Nombre, Cliente or RUC column." });
+    }
+
+    const normalizeHeader = (value: string) => value
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/^\uFEFF/, '')
+      .toLowerCase()
+      .replace(/[\s-]+/g, '_')
+      .trim();
+    const getField = (row: Record<string, any>, keys: string[]) => {
+      for (const key of Object.keys(row)) {
+        if (keys.includes(normalizeHeader(key))) return row[key];
+      }
+      return undefined;
+    };
+    const headers = sheetRows[headerIndex].map(header => String(header ?? '').trim());
+    const importedCustomers = sheetRows
+      .slice(headerIndex + 1)
+      .filter(row => row.some(cell => cell !== null && cell !== undefined && String(cell).trim() !== ''))
+      .map(row => {
+        const source: Record<string, any> = {};
+        headers.forEach((header, index) => {
+          if (header) source[header] = row[index];
+        });
+        return {
+          name: String(getField(source, ['nombre', 'nombre_completo', 'name', 'cliente', 'razon_social']) || '').trim(),
+          phone: String(getField(source, ['telefono', 'phone', 'celular', 'whatsapp']) || '').trim() || undefined,
+          email: String(getField(source, ['email', 'correo', 'correo_electronico']) || '').trim() || undefined,
+          address: String(getField(source, ['direccion', 'address', 'distrito']) || '').trim() || undefined,
+          documentNumber: String(getField(source, ['dni', 'ruc', 'dni_ruc', 'documentnumber', 'documento']) || '').trim() || undefined,
+          notes: String(getField(source, ['notas', 'notes', 'observaciones', 'actividad', 'subrubro']) || '').trim() || undefined,
+        };
+      })
+      .filter(customer => customer.name);
+
+    if (importedCustomers.length === 0) {
+      return res.status(400).json({ error: "No valid customers were found. Include a Nombre column with data." });
+    }
+
+    let created = 0;
+    const batchSize = 500;
+    if (useSupabaseDb) {
+      const client = getRequestSupabase(req);
+      if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+      for (let start = 0; start < importedCustomers.length; start += batchSize) {
+        const batch = importedCustomers.slice(start, start + batchSize);
+        const payload = batch.map(customer => stripUndefined(fromCustomer({ ...customer, companyId })));
+        const { data, error } = await client.from("customers").insert(payload).select("id");
+        if (error) return res.status(500).json({ error: error.message, created, total: importedCustomers.length });
+        created += data?.length || 0;
+      }
+    } else {
+      const entries = importedCustomers.map((customer, index) => ({
+        id: `${Date.now()}-${index}`,
+        companyId,
+        ...customer,
+      }));
+      db.customers.unshift(...entries);
+      created = entries.length;
+      addAuditLog(companyId, "CREAR", "Clientes", `${created} clientes importados al directorio`);
+    }
+
+    return res.json({ created, skipped: sheetRows.length - headerIndex - 1 - importedCustomers.length, total: importedCustomers.length });
   });
 
   app.post("/api/crm-deals", async (req, res) => {
