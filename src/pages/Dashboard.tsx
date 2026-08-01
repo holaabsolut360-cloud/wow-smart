@@ -74,7 +74,10 @@ export default function Dashboard() {
 
   useEffect(() => {
     // Fetch user 1 dashboard data
-    apiClient.get("/api/dashboard/1")
+    // Nota: el "userId" en la URL es solo un placeholder — el backend SIEMPRE usa el ID
+    // del usuario autenticado (extraído del token en el header Authorization) cuando hay
+    // una sesión válida, y devuelve 401 si no la hay. Nunca confía en este valor de la URL.
+    apiClient.get("/api/dashboard/me")
       
       .then(data => {
         setCompany(data.company);
@@ -95,6 +98,10 @@ export default function Dashboard() {
         }
         if (err.status === 404 || err.message?.includes('Company not found')) {
           navigate('/auth?mode=onboarding');
+          return;
+        }
+        if (err.status === 401) {
+          navigate('/auth');
           return;
         }
         console.error(err);
