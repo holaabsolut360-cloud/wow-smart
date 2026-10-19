@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { CheckCircle, LayoutDashboard, ShoppingBag, Zap, ShoppingCart, ChevronDown, Phone, Mail, MapPin } from "lucide-react";
 import Logo from '../components/Logo';
 import { DEMO_CATALOG_SLUG } from '../config/site';
+import PricingTable from '../components/PricingTable';
 
 export default function Landing() {
   return (
@@ -92,174 +93,7 @@ export default function Landing() {
         </section>
 
         {/* Pricing Grid */}
-        <section className="grid grid-cols-1 md:grid-cols-3 gap-8 w-full max-w-6xl mb-20 px-4">
-          {/* Plan Emprendedor */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-8 flex flex-col shadow-sm">
-            <div className="mb-6">
-              <h3 className="text-xl font-bold text-slate-800">🚀 Emprendedor</h3>
-              <p className="text-sm text-slate-500 mt-2 min-h-[40px]">Empieza a vender por Internet sin complicaciones.</p>
-              <div className="flex items-baseline gap-1 mt-4">
-                <span className="text-4xl font-black text-slate-900">S/ 15</span>
-                <span className="text-slate-500 font-medium">/mes</span>
-              </div>
-            </div>
-            <ul className="flex-grow space-y-4 mb-8">
-              <li className="flex items-start gap-3 text-sm text-slate-600 font-medium">
-                <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
-                <span>Hasta 50 productos</span>
-              </li>
-              <li className="flex items-start gap-3 text-sm text-slate-600 font-medium">
-                <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
-                <span>Catálogo Digital</span>
-              </li>
-              <li className="flex items-start gap-3 text-sm text-slate-600 font-medium">
-                <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
-                <span>Pedidos por WhatsApp</span>
-              </li>
-              <li className="flex items-start gap-3 text-sm text-slate-600 font-medium">
-                <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
-                <span>Código QR para compartir</span>
-              </li>
-              <li className="flex items-start gap-3 text-sm text-slate-600 font-medium">
-                <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
-                <span>Gestión básica de clientes</span>
-              </li>
-              <li className="flex items-start gap-3 text-sm text-slate-600 font-medium">
-                <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
-                <span>Personalización básica</span>
-              </li>
-              <li className="flex items-start gap-3 text-sm text-slate-600 font-medium">
-                <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
-                <span>1 Usuario</span>
-              </li>
-            </ul>
-            <div className="mt-auto pt-6 border-t border-slate-100">
-              <p className="text-xs text-slate-500 mb-4 font-medium italic">Ideal para: Emprendedores y pequeños negocios.</p>
-              <Link to="/checkout/emprendedor" className="block text-center w-full py-3.5 rounded-xl border-2 border-slate-200 text-slate-700 font-bold hover:bg-slate-50 hover:border-slate-300 transition-all">
-                Contratar Emprendedor
-              </Link>
-            </div>
-          </div>
-
-          {/* Plan Negocio Pequeño (Más Popular) */}
-          <div className="bg-indigo-600 rounded-2xl border border-indigo-500 p-8 flex flex-col shadow-xl ring-4 ring-indigo-500/20 relative">
-            <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-amber-400 text-amber-950 text-[10px] font-black px-4 py-1.5 rounded-full uppercase tracking-widest whitespace-nowrap shadow-sm">
-              Más popular
-            </div>
-            <div className="mb-6">
-              <h3 className="text-xl font-bold text-white">⭐ Negocio Pequeño</h3>
-              <p className="text-sm text-indigo-100 mt-2 min-h-[40px]">Controla las ventas de tu negocio desde un solo lugar.</p>
-              <div className="flex items-baseline gap-1 mt-4">
-                <span className="text-4xl font-black text-white">S/ 39</span>
-                <span className="text-indigo-100 font-medium">/mes</span>
-              </div>
-            </div>
-            <ul className="flex-grow space-y-4 mb-8">
-              <li className="flex items-start gap-3 text-sm text-white font-medium">
-                <CheckCircle className="w-5 h-5 text-indigo-300 shrink-0" />
-                <span>Hasta 300 productos</span>
-              </li>
-              <li className="flex items-start gap-3 text-sm text-white font-medium">
-                <CheckCircle className="w-5 h-5 text-indigo-300 shrink-0" />
-                <span>Punto de Venta (POS)</span>
-              </li>
-              <li className="flex items-start gap-3 text-sm text-white font-medium">
-                <CheckCircle className="w-5 h-5 text-indigo-300 shrink-0" />
-                <span>Control de Inventario</span>
-              </li>
-              <li className="flex items-start gap-3 text-sm text-white font-medium">
-                <CheckCircle className="w-5 h-5 text-indigo-300 shrink-0" />
-                <span>Gestión de Clientes (CRM)</span>
-              </li>
-              <li className="flex items-start gap-3 text-sm text-white font-medium">
-                <CheckCircle className="w-5 h-5 text-indigo-300 shrink-0" />
-                <span>Caja diaria</span>
-              </li>
-              <li className="flex items-start gap-3 text-sm text-white font-medium">
-                <CheckCircle className="w-5 h-5 text-indigo-300 shrink-0" />
-                <span>Reportes de ventas</span>
-              </li>
-              <li className="flex items-start gap-3 text-sm text-white font-medium">
-                <CheckCircle className="w-5 h-5 text-indigo-300 shrink-0" />
-                <span>Pagos con Yape y Plin</span>
-              </li>
-              <li className="flex items-start gap-3 text-sm text-white font-medium">
-                <CheckCircle className="w-5 h-5 text-indigo-300 shrink-0" />
-                <span>Personaliza tu marca</span>
-              </li>
-              <li className="flex items-start gap-3 text-sm text-white font-medium">
-                <CheckCircle className="w-5 h-5 text-indigo-300 shrink-0" />
-                <span>Hasta 3 usuarios</span>
-              </li>
-            </ul>
-            <div className="mt-auto pt-6 border-t border-indigo-500/50">
-              <p className="text-xs text-indigo-100 mb-4 font-medium italic">Ideal para: tiendas, bodegas, restaurantes y negocios con ventas diarias.</p>
-              <Link to="/checkout/negocio" className="block text-center w-full py-3.5 rounded-xl bg-white text-indigo-600 font-bold shadow-md hover:bg-slate-50 transition-colors">
-                Contratar Negocio
-              </Link>
-            </div>
-          </div>
-
-          {/* Plan Empresa */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-8 flex flex-col shadow-sm">
-            <div className="mb-6">
-              <h3 className="text-xl font-bold text-slate-800">🏢 Empresa</h3>
-              <p className="text-sm text-slate-500 mt-2 min-h-[40px]">Automatiza tu empresa y aumenta tus ventas.</p>
-              <div className="flex items-baseline gap-1 mt-4">
-                <span className="text-4xl font-black text-slate-900">S/ 79</span>
-                <span className="text-slate-500 font-medium">/mes</span>
-              </div>
-            </div>
-            <ul className="flex-grow space-y-4 mb-8">
-              <li className="flex items-start gap-3 text-sm text-slate-600 font-bold">
-                <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
-                <span>Todo lo de Negocio Pequeño, más:</span>
-              </li>
-              <li className="flex items-start gap-3 text-sm text-slate-600 font-medium">
-                <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
-                <span>Hasta 700 productos</span>
-              </li>
-              <li className="flex items-start gap-3 text-sm text-slate-600 font-medium">
-                <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
-                <span>Programa de Fidelización</span>
-              </li>
-              <li className="flex items-start gap-3 text-sm text-slate-600 font-medium">
-                <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
-                <span>Cupones y promociones</span>
-              </li>
-              <li className="flex items-start gap-3 text-sm text-slate-600 font-medium">
-                <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
-                <span>Dominio personalizado</span>
-              </li>
-              <li className="flex items-start gap-3 text-sm text-slate-600 font-medium">
-                <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
-                <span>Multiusuarios</span>
-              </li>
-              <li className="flex items-start gap-3 text-sm text-slate-600 font-medium">
-                <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
-                <span>Múltiples sucursales</span>
-              </li>
-              <li className="flex items-start gap-3 text-sm text-slate-600 font-medium">
-                <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
-                <span>Reportes avanzados</span>
-              </li>
-              <li className="flex items-start gap-3 text-sm text-slate-600 font-medium">
-                <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
-                <span>Roles y permisos</span>
-              </li>
-              <li className="flex items-start gap-3 text-sm text-slate-600 font-medium">
-                <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
-                <span>Soporte prioritario</span>
-              </li>
-            </ul>
-            <div className="mt-auto pt-6 border-t border-slate-100">
-              <p className="text-xs text-slate-500 mb-4 font-medium italic">Ideal para: Empresas que buscan crecer y automatizar sus procesos.</p>
-              <Link to="/checkout/empresa" className="block text-center w-full py-3.5 rounded-xl border-2 border-slate-200 text-slate-700 font-bold hover:bg-slate-50 hover:border-slate-300 transition-all">
-                Contratar Empresa
-              </Link>
-            </div>
-          </div>
-        </section>
+        <PricingTable />
 
         {/* Comparativa de planes */}
         <section className="w-full max-w-4xl mb-10 px-4">
@@ -282,7 +116,8 @@ export default function Landing() {
                   ['Catálogo digital y pedidos por WhatsApp', '✓', '✓', '✓'],
                   ['Punto de venta, inventario y caja', '—', '✓', '✓'],
                   ['CRM y reportes de ventas', '—', '✓', '✓ (avanzados)'],
-                  ['Cupones, fidelización y sucursales', '—', '—', '✓'],
+                  ['Fidelización (puntos, premios) y Google Wallet', '—', '✓', '✓'],
+                  ['Cupones, alertas por cercanía y varias sucursales', '—', '—', '✓'],
                   ['Dominio personalizado', '—', '—', '✓'],
                 ].map(([label, a, b, c]) => (
                   <tr key={label} className="border-t border-slate-100">

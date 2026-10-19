@@ -14,6 +14,15 @@ vi.mock('motion/react', () => ({
 import Landing from '../../src/pages/Landing';
 
 describe('Landing page', () => {
+  it('el selector anual aplica 20% (S/ 12, 31.20, 63.20)', async () => {
+    const { fireEvent } = await import('@testing-library/react');
+    render(<MemoryRouter><Landing /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('radio', { name: /Anual/i }));
+    expect(screen.getByTestId('precio-emprendedor').textContent).toBe('S/ 12');
+    expect(screen.getByTestId('precio-negocio').textContent).toBe('S/ 31.20');
+    expect(screen.getByTestId('precio-empresa').textContent).toBe('S/ 63.20');
+  });
+
   it('muestra el bloque de doble camino con copy y CTA de prueba gratuita', () => {
     const { container } = render(
       <MemoryRouter>
@@ -44,9 +53,12 @@ describe('Landing page', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('link', { name: /Contratar Emprendedor/i })).toBeTruthy();
-    expect(screen.getByRole('link', { name: /Contratar Negocio/i })).toBeTruthy();
-    expect(screen.getByRole('link', { name: /Contratar Empresa/i })).toBeTruthy();
+    expect(screen.getAllByRole('link', { name: /Empieza gratis/i }).length).toBe(3);
+    expect(container.querySelector('a[href$="plan=negocio"]')).not.toBeNull();
+    expect(screen.getByText(/Prueba 15 días gratis, sin tarjeta/i)).toBeTruthy();
+    expect(screen.getByText(/Menos de S\/ 1.30 al día/i)).toBeTruthy();
+    expect(screen.getByText(/Sin comisiones por venta/i)).toBeTruthy();
+    expect(container.querySelector('a[href^="https://wa.me/51901345791"]')).not.toBeNull();
 
     expect(container.querySelector('a[href="/checkout/emprendedor"]')).not.toBeNull();
     expect(container.querySelector('a[href="/checkout/negocio"]')).not.toBeNull();
