@@ -1,5 +1,6 @@
 import React, { useCallback, useState } from 'react';
 import { Upload, X, Image as ImageIcon } from 'lucide-react';
+import { apiClient } from '../services/api';
 
 interface ImageUploadProps {
   value: string;
@@ -7,6 +8,8 @@ interface ImageUploadProps {
   label: string;
   hint?: string;
   aspectRatio?: 'square' | 'video' | 'auto';
+  /** Subir a Supabase Storage (por defecto sí). Si falla, se guarda como antes (base64). */
+  upload?: boolean;
 }
 
 // Redimensiona y comprime la imagen en el navegador antes de convertirla
@@ -14,8 +17,21 @@ interface ImageUploadProps {
 // lento el guardado) sin necesidad de tocar el backend ni la base de datos.
 const MAX_DIMENSION = 1200; // px, lado más largo
 const JPEG_QUALITY = 0.8;
+const WEBP_QUALITY = 0.8;
 
-const resizeAndCompress = (file: File): Promise<string> => {
+// Sube la imagen ya comprimida a Storage; si no se puede (p. ej. falta el
+// bucket), devuelve el base64 para no bloquear al usuario.
+export const uploadCompressed = async (dataUrl: string): Promise<string> => {
+  try {
+    const res = await apiClient.post('/api/uploads/image', { dataUrl });
+    return res?.url || dataUrl;
+  } catch {
+    return dataUrl;
+  }
+};
+export { resizeAndCompress };
+
+function resizeAndCompress(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -43,10 +59,13 @@ const resizeAndCompress = (file: File): Promise<string> => {
         }
         ctx.drawImage(img, 0, 0, width, height);
 
-        // PNG con transparencia se mantiene como PNG; el resto se comprime a JPEG.
-        const isPng = file.type === 'image/png';
-        const mime = isPng ? 'image/png' : 'image/jpeg';
-        const dataUrl = canvas.toDataURL(mime, isPng ? undefined : JPEG_QUALITY);
+        // WebP (mantiene transparencia y pesa mucho menos). Si el navegador
+        // no soporta WebP, cae a JPEG/PNG como antes.
+        let dataUrl = canvas.toDataURL('image/webp', WEBP_QUALITY);
+        if (!dataUrl.startsWith('data:image/webp')) {
+          const isPng = file.type === 'image/png';
+          dataUrl = canvas.toDataURL(isPng ? 'image/png' : 'image/jpeg', isPng ? undefined : JPEG_QUALITY);
+        }
         resolve(dataUrl);
       };
       img.onerror = () => reject(new Error('No se pudo procesar la imagen'));
@@ -57,7 +76,7 @@ const resizeAndCompress = (file: File): Promise<string> => {
   });
 };
 
-export function ImageUpload({ value, onChange, label, hint, aspectRatio = 'auto' }: ImageUploadProps) {
+export function ImageUpload({ value, onChange, label, hint, aspectRatio = 'auto', upload = true }: ImageUploadProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -79,7 +98,7 @@ export function ImageUpload({ value, onChange, label, hint, aspectRatio = 'auto'
     setIsProcessing(true);
     try {
       const compressed = await resizeAndCompress(file);
-      onChange(compressed);
+      onChange(upload ? await uploadCompressed(compressed) : compressed);
     } catch (err) {
       alert('No se pudo procesar la imagen. Intenta con otro archivo.');
     } finally {

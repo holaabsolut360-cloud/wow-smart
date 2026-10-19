@@ -19,6 +19,8 @@ import { ExpensesTab } from "../components/dashboard/ExpensesTab";
 import { ProductsTab } from "../components/dashboard/ProductsTab";
 import { OrdersTab } from "../components/dashboard/OrdersTab";
 import { CustomersTab } from "../components/dashboard/CustomersTab";
+import { GrowthPanel } from "../components/dashboard/GrowthPanel";
+import { Home } from "lucide-react";
 import { ImageUpload } from "../components/ImageUpload";
 import { QRCodeSVG } from "qrcode.react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
@@ -60,7 +62,7 @@ export default function Dashboard() {
   const products: any[] = [];
   const orders: any[] = [];
   const customers: any[] = [];
-  const [activeTab, setActiveTab] = useState<'products' | 'orders' | 'categories' | 'coupons' | 'analytics' | 'customers' | 'expenses' | 'settings' | 'pos' | 'security' | 'recipes' | 'debts' | 'inventory' | 'crm' | 'suppliers'>('pos');
+  const [activeTab, setActiveTab] = useState<'home' | 'products' | 'orders' | 'categories' | 'coupons' | 'analytics' | 'customers' | 'expenses' | 'settings' | 'pos' | 'security' | 'recipes' | 'debts' | 'inventory' | 'crm' | 'suppliers'>('home');
 
   const isServiceBusiness = company?.businessType === 'Estudio de Abogados' || company?.businessType === 'Servicios Profesionales' || company?.businessType === 'Agencia de Publicidad' || company?.businessType === 'Imprenta';
   const isGastronomic = company?.businessType === 'Restaurante';
@@ -161,6 +163,12 @@ export default function Dashboard() {
           </select>
         </div>
         <nav className="flex md:flex-1 md:flex-col space-x-2 md:space-x-0 md:space-y-2 mt-4 md:mt-0 overflow-x-auto pb-2 md:pb-0">
+          <button
+            onClick={() => setActiveTab("home")}
+            className={`flex items-center gap-2 md:gap-3 px-4 py-2 md:py-3 rounded-xl font-bold transition-colors whitespace-nowrap md:w-full ${activeTab === 'home' ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-slate-50 text-slate-600 font-medium'}`}
+          >
+            <Home className="w-5 h-5" /> Inicio
+          </button>
           {hasAccess("pos") && <button 
             onClick={() => setActiveTab("pos")} 
             className={`flex items-center gap-2 md:gap-3 px-4 py-2 md:py-3 rounded-xl font-bold transition-colors whitespace-nowrap md:w-full ${activeTab === 'pos' ? 'bg-indigo-600 text-white shadow-md' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'}`}
@@ -285,7 +293,7 @@ export default function Dashboard() {
 
       {/* Main Content */}
       <main className={`flex-1 overflow-y-auto ${activeTab === 'pos' ? 'bg-slate-100 p-0 sm:p-0 md:p-0' : 'p-4 sm:p-8 md:p-12'}`}>
-                {company?.subscriptionStatus === 'Prueba Gratuita' && new Date(company.subscriptionEndsAt) < new Date() && (
+                {activeTab !== 'home' && company?.subscriptionStatus === 'Prueba Gratuita' && new Date(company.subscriptionEndsAt) < new Date() && (
           <div className="bg-amber-50 border-b border-amber-200 p-4 text-center">
             <h3 className="text-amber-800 font-bold flex justify-center items-center gap-2">
               <ShieldCheck className="w-5 h-5" />
@@ -303,11 +311,11 @@ export default function Dashboard() {
           </div>
         )}
 
-        {company?.subscriptionStatus === 'Prueba Gratuita' && new Date(company.subscriptionEndsAt) >= new Date() && (
+        {activeTab !== 'home' && company?.subscriptionStatus === 'Prueba Gratuita' && new Date(company.subscriptionEndsAt) >= new Date() && (
           <div className="bg-indigo-50 border-b border-indigo-200 p-4 text-center">
             <h3 className="text-indigo-800 font-bold flex justify-center items-center gap-2">
               <ShieldCheck className="w-5 h-5" />
-              Estás en el período de Prueba Gratuita (Vence: {new Date(company.subscriptionEndsAt).toLocaleDateString()})
+              Estás en el período de Prueba Gratuita (Vence: {new Date(String(company.subscriptionEndsAt).length <= 10 ? company.subscriptionEndsAt + 'T12:00:00' : company.subscriptionEndsAt).toLocaleDateString('es-PE')})
             </h3>
             <p className="text-indigo-500 text-xs mt-1">
               Los precios de los planes (S/ 15 o S/ 39) no incluyen IGV; al pagar se añade el 18% de impuesto de ley.
@@ -348,7 +356,9 @@ export default function Dashboard() {
           </div>
         )}
         
-        {activeTab === 'pos' ? (
+        {activeTab === 'home' && company ? (
+          <GrowthPanel company={company} setCompany={setCompany as any} goToTab={setActiveTab} />
+        ) : activeTab === 'pos' ? (
           <div className="h-full p-4 sm:p-6 md:p-8">
             <PosSystem 
               company={company!} 

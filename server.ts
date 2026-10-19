@@ -8,6 +8,8 @@ import crypto from "crypto";
 import { readSheet as readExcelSheet } from "read-excel-file/node";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
+import { RUBRO_TEMPLATES, normalizeWhatsapp, isValidWhatsapp } from "./src/config/templates";
+import { DEMO_CATALOG_SLUG } from "./src/config/site";
 
 const isProduction = process.env.NODE_ENV === "production";
 const requiredServerEnv = ["SUPABASE_URL", "SUPABASE_ANON_KEY"];
@@ -199,6 +201,16 @@ async function startServer() {
   const PORT = Number(process.env.PORT || 3000);
 
   app.use(express.json({ limit: '50mb' }));
+  // JSON mal formado -> 400 en JSON (no la página HTML de error de Express).
+  app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (err && (err.type === 'entity.parse.failed' || err instanceof SyntaxError)) {
+      return res.status(400).json({ error: 'El cuerpo de la solicitud no es un JSON válido', code: 'BAD_JSON' });
+    }
+    if (err && err.type === 'entity.too.large') {
+      return res.status(413).json({ error: 'El archivo es demasiado grande', code: 'TOO_LARGE' });
+    }
+    next(err);
+  });
 
   // Headers de seguridad básicos (anti-clickjacking, anti-MIME-sniffing,
   // HSTS, etc.) más un CSP a medida (no la config por defecto de helmet,
@@ -217,11 +229,11 @@ async function startServer() {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'", "https://www.googletagmanager.com", "https://connect.facebook.net"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "https://www.googletagmanager.com", "https://connect.facebook.net", "https://static.cloudflareinsights.com"],
         styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
         fontSrc: ["'self'", "https://fonts.gstatic.com"],
         imgSrc: ["'self'", "data:", "blob:", "https://*.supabase.co", "https://api.dicebear.com", "https://www.facebook.com", "https://www.google-analytics.com"],
-        connectSrc: ["'self'", "https://*.supabase.co", "https://www.google-analytics.com", "https://www.googletagmanager.com", "https://www.facebook.com", "https://connect.facebook.net"],
+        connectSrc: ["'self'", "https://*.supabase.co", "https://cloudflareinsights.com", "https://www.google-analytics.com", "https://www.googletagmanager.com", "https://www.facebook.com", "https://connect.facebook.net"],
         objectSrc: ["'none'"],
         baseUri: ["'self'"],
         formAction: ["'self'"],
@@ -232,6 +244,11 @@ async function startServer() {
   }));
 
   const publicBaseUrl = (process.env.PUBLIC_BASE_URL || 'https://wow-smart.com').replace(/\/$/, '');
+  // Atajos fáciles de recordar
+  app.get(["/demo", "/demo/"], (_req, res) => res.redirect(302, `/c/${DEMO_CATALOG_SLUG}`));
+  app.get(["/login", "/login/", "/ingresar"], (_req, res) => res.redirect(302, "/auth"));
+  app.get(["/registro", "/registro/", "/registrate"], (_req, res) => res.redirect(302, "/auth?mode=register"));
+
   app.get("/robots.txt", (_req, res) => {
     res.type("text/plain").send(`User-agent: *\nAllow: /\nDisallow: /dashboard\nDisallow: /superadmin\nDisallow: /checkout\nDisallow: /api/\n\nSitemap: ${publicBaseUrl}/sitemap.xml\n`);
   });
@@ -898,8 +915,9 @@ const authMiddleware = async (req: express.Request, res: express.Response, next:
     req.path === '/payment-settings' ||
     req.path === '/approve-subscription' ||
     req.path === '/complaints' ||
-    (req.method === 'GET' && req.path === '/products') ||
-    (req.method === 'POST' && req.path === '/orders');
+    (req.method === 'POST' && req.path === '/track') ||
+    (req.method === 'POST' && req.path === '/orders' && !req.headers.authorization);
+
 
   if (publicApiRoute) {
     return next();
@@ -941,7 +959,9 @@ const isBillingRoute = (path: string) => (
   matchesPath(path, '/plans') ||
   matchesPath(path, '/payment-proof') ||
   matchesPath(path, '/subscription-payments') ||
-  matchesPath(path, '/support-tickets')
+  matchesPath(path, '/support-tickets') ||
+  matchesPath(path, '/renewal') ||
+  matchesPath(path, '/growth')
 );
 
 const subscriptionGuard = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -977,7 +997,8 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
   const endsAtRaw = useSupabaseDb ? company.subscription_ends_at : company.subscriptionEndsAt;
   const isTrialExpired = status === 'Prueba Gratuita' && !!endsAtRaw && new Date(endsAtRaw) < new Date();
 
-  if (isTrialExpired) {
+  // Solo se escribe 'Vencida' en la base cuando el corte está activado.
+  if (isTrialExpired && ENFORCE_SUBSCRIPTION_EXPIRY) {
     if (useSupabaseDb) {
       const client = getRequestSupabase(req);
       if (client) {
@@ -995,13 +1016,22 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
 
   const effectiveStatus = useSupabaseDb ? company.subscription_status : company.subscriptionStatus;
   const computedExpired = ENFORCE_SUBSCRIPTION_EXPIRY && computeSubscriptionStatus(effectiveStatus, endsAtRaw) === 'Vencida';
-  const isBlocked = effectiveStatus === 'Vencida' || effectiveStatus === 'Suspendida' || computedExpired;
 
-  if (isBlocked && !isBillingRoute(path)) {
+  // Suspendida: bloqueo total (salvo pagos). Vencida: modo SOLO LECTURA —
+  // puede ver su panel y sus datos, pero no crear ni editar hasta renovar.
+  if (effectiveStatus === 'Suspendida' && !isBillingRoute(path)) {
     return res.status(402).json({
-      error: 'Tu suscripción está vencida. Debes activar uno de los planes para continuar.',
+      error: 'Tu cuenta está suspendida. Renueva tu plan para continuar.',
       code: 'SUBSCRIPTION_REQUIRED',
       subscriptionStatus: effectiveStatus,
+    });
+  }
+  const isExpired = effectiveStatus === 'Vencida' || computedExpired;
+  if (isExpired && req.method !== 'GET' && !isBillingRoute(path)) {
+    return res.status(402).json({
+      error: 'Tu plan venció: tu panel está en modo solo lectura. Renueva para volver a editar.',
+      code: 'READ_ONLY',
+      subscriptionStatus: 'Vencida',
     });
   }
 
@@ -1009,6 +1039,16 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
 };
 
 
+  // Rutas /api inexistentes -> 404 JSON antes de pedir sesión.
+  app.use('/api', (req, res, next) => {
+    const fullPath = (req.originalUrl || '').split('?')[0];
+    const stack: any[] = (app as any)._router?.stack || [];
+    const exists = stack.some((layer: any) =>
+      layer.route && layer.route.path !== '*' && layer.match(fullPath) &&
+      (layer.route._handles_method(req.method) || (req.method === 'HEAD' && layer.route._handles_method('GET'))));
+    if (!exists) return res.status(404).json({ error: 'Ruta no encontrada', code: 'NOT_FOUND' });
+    next();
+  });
   app.use('/api', authMiddleware);
   app.use('/api', subscriptionGuard);
 
@@ -1269,7 +1309,17 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
       date: row.created_at,
       userId: row.user_id,
       companyId: row.company_id,
+      proofPath: row.proof_path || (typeof row.reference === 'string' && row.reference.startsWith('proof:') ? row.reference.slice(6) : null),
     }));
+
+    // Enlace temporal (1 h) a la captura de Yape, si existe.
+    if (supabaseAdmin) {
+      await Promise.all(pagos.map(async (p: any) => {
+        if (!p.proofPath) return;
+        const { data: signed } = await supabaseAdmin.storage.from('payment-proofs').createSignedUrl(p.proofPath, 3600);
+        p.proofUrl = signed?.signedUrl || null;
+      }));
+    }
 
     res.json({ data: pagos });
   });
@@ -2128,6 +2178,197 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     res.json({ data: leads });
   });
 
+
+  // ==========================================================================
+  // v3: crecimiento (métricas, avisos de prueba, compartir, plantillas,
+  // imágenes en Storage y renovación con captura de Yape).
+  // Todo degrada con elegancia si aún no se corrió v3.sql.
+  // ==========================================================================
+  const getOwnedCompanyRow = async (req: express.Request) => {
+    const user = (req as any).user;
+    if (!user) return { user: null, client: null, row: null };
+    const client = getRequestSupabase(req);
+    if (!client) return { user, client: null, row: null };
+    const { data } = await client.from("companies").select("*").eq("user_id", user.id)
+      .order("created_at", { ascending: false }).limit(1).maybeSingle();
+    return { user, client, row: data || null };
+  };
+
+  const trackLimiter = rateLimit({ windowMs: 60 * 1000, limit: 60, standardHeaders: true, legacyHeaders: false });
+  const companyIdBySlug = new Map<string, { id: string; at: number }>();
+  app.post("/api/track", trackLimiter, async (req, res) => {
+    const { slug, type, productId } = req.body || {};
+    if (!['visit', 'whatsapp_click', 'share'].includes(type) || typeof slug !== 'string') return res.status(204).end();
+    if (!useSupabaseDb || !supabase) return res.status(204).end();
+    try {
+      let cached = companyIdBySlug.get(slug);
+      if (!cached || Date.now() - cached.at > 10 * 60 * 1000) {
+        const { data } = await supabase.from("companies_public").select("id").eq("slug", slug).maybeSingle();
+        if (!data) return res.status(204).end();
+        cached = { id: data.id, at: Date.now() };
+        companyIdBySlug.set(slug, cached);
+      }
+      const row: any = { company_id: cached.id, type };
+      if (typeof productId === 'string' && /^[0-9a-f-]{36}$/i.test(productId)) row.product_id = productId;
+      await (supabaseAdmin || supabase).from("catalog_events").insert(row);
+    } catch { /* tabla aún no creada: se ignora */ }
+    res.status(204).end();
+  });
+
+  const sentNoticesMemory = new Set<string>();
+  const trialNoticeFor = (status: string, endsAt: string | null) => {
+    if (!endsAt) return null;
+    const msLeft = new Date(endsAt + (endsAt.length <= 10 ? 'T23:59:59-05:00' : '')).getTime() - Date.now();
+    const daysLeft = Math.ceil(msLeft / 86400000);
+    const isTrial = status === 'Prueba Gratuita';
+    const label = isTrial ? 'tu prueba gratis' : 'tu plan';
+    if (daysLeft <= 0) return { kind: isTrial ? 'trial_expired' : 'plan_expired', level: 'danger', daysLeft,
+      title: `${isTrial ? 'Tu prueba gratis terminó' : 'Tu plan venció'}`,
+      text: 'Tu catálogo sigue visible. Renueva con Yape en un clic para seguir editando y recibiendo pedidos sin interrupciones.' };
+    if (daysLeft <= 2) return { kind: isTrial ? 'trial_d13' : 'plan_d13', level: 'warning', daysLeft,
+      title: `Te ${daysLeft === 1 ? 'queda 1 día' : `quedan ${daysLeft} días`} de ${label}`,
+      text: 'Renueva hoy y no pierdas ningún pedido.' };
+    if (daysLeft <= 5) return { kind: isTrial ? 'trial_d10' : 'plan_d10', level: 'info', daysLeft,
+      title: `Te quedan ${daysLeft} días de ${label}`,
+      text: 'Elige tu plan cuando quieras: Emprendedor desde S/ 15 al mes.' };
+    return { kind: null, level: 'ok', daysLeft, title: `${isTrial ? 'Prueba gratis' : 'Plan activo'}: ${daysLeft} días restantes`, text: '' };
+  };
+
+  const maybeEmailNotice = async (client: any, company: any, email: string | undefined, notice: any) => {
+    if (!notice?.kind || !email) return 'panel';
+    const key = `${company.id}:${notice.kind}`;
+    if (sentNoticesMemory.has(key)) return 'panel';
+    sentNoticesMemory.add(key);
+    try {
+      const { error } = await (supabaseAdmin || client).from("company_notices").insert({ company_id: company.id, kind: notice.kind, channel: resend ? 'email' : 'panel' });
+      if (error) return 'panel'; // ya enviado antes, o tabla aún no creada
+      if (!resend) return 'panel';
+      await resend.emails.send({
+        from: 'WowSmart <onboarding@resend.dev>',
+        to: [email],
+        subject: `${notice.title} — WowSmart`,
+        html: `<div style="font-family:sans-serif;max-width:560px;margin:auto"><h2 style="color:#6d28d9">${notice.title}</h2><p>Hola, te escribimos por <b>${String(company.name).replace(/</g, '&lt;')}</b>.</p><p>${notice.text}</p><p><a href="${publicBaseUrl}/dashboard" style="background:#6d28d9;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:bold">Ir a mi panel</a></p><p style="color:#64748b">Equipo WowSmart</p></div>`,
+      });
+      return 'email';
+    } catch { return 'panel'; }
+  };
+
+  app.get("/api/growth/me", async (req, res) => {
+    const { user, client, row } = await getOwnedCompanyRow(req);
+    if (!user) return res.status(401).json({ error: "Unauthorized" });
+    if (!client || !row) return res.status(404).json({ error: "Company not found" });
+    const status = row.subscription_status || 'Activa';
+    const computed = computeSubscriptionStatus(status, row.subscription_ends_at);
+    const notice = trialNoticeFor(status, row.subscription_ends_at);
+    const channel = await maybeEmailNotice(client, row, user.email, notice);
+
+    const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+    const [{ count: productsCount }, ordersRes, eventsRes] = await Promise.all([
+      client.from("products").select("id", { count: "exact", head: true }).eq("company_id", row.id),
+      client.from("orders").select("items,total,created_at,status").eq("company_id", row.id).gte("created_at", weekAgo),
+      client.from("catalog_events").select("type,product_id").eq("company_id", row.id).gte("created_at", weekAgo).limit(10000),
+    ]);
+    const weekOrders = ordersRes.data || [];
+    const top: Record<string, { name: string; qty: number }> = {};
+    weekOrders.forEach((o: any) => (o.items || []).forEach((it: any) => {
+      const k = it.productId || it.name; if (!k) return;
+      top[k] = top[k] || { name: it.name, qty: 0 }; top[k].qty += Number(it.qty || 0);
+    }));
+    const topProduct = Object.values(top).sort((a, b) => b.qty - a.qty)[0] || null;
+    const events = eventsRes.error ? null : (eventsRes.data || []);
+
+    res.json({
+      company: { id: row.id, name: row.name, slug: row.slug, logo: row.logo, whatsapp: row.whatsapp, color: row.color },
+      shareUrl: `${publicBaseUrl}/c/${row.slug}`,
+      setup: {
+        whatsapp: isValidWhatsapp(row.whatsapp),
+        logo: Boolean(row.logo),
+        products: (productsCount || 0) > 0,
+        productsCount: productsCount || 0,
+      },
+      subscription: {
+        status, computedStatus: computed, endsAt: row.subscription_ends_at, plan: row.plan,
+        readOnly: ENFORCE_SUBSCRIPTION_EXPIRY && computed === 'Vencida', enforce: ENFORCE_SUBSCRIPTION_EXPIRY,
+      },
+      notice: notice ? { ...notice, channel } : null,
+      metrics: {
+        available: events !== null,
+        visits: events ? events.filter((e: any) => e.type === 'visit').length : 0,
+        whatsappClicks: events ? events.filter((e: any) => e.type === 'whatsapp_click').length : 0,
+        ordersThisWeek: weekOrders.length,
+        salesThisWeek: weekOrders.reduce((sum: number, o: any) => sum + Number(o.total || 0), 0),
+        topProduct,
+      },
+      templates: Object.entries(RUBRO_TEMPLATES).map(([key, t]) => ({ key, label: t.label, emoji: t.emoji, count: t.products.length })),
+    });
+  });
+
+  app.post("/api/templates/apply", async (req, res) => {
+    const { user, client, row } = await getOwnedCompanyRow(req);
+    if (!user) return res.status(401).json({ error: "Unauthorized" });
+    if (!client || !row) return res.status(404).json({ error: "Company not found" });
+    const t = (RUBRO_TEMPLATES as any)[req.body?.rubro];
+    if (!t) return res.status(400).json({ error: "Plantilla no encontrada" });
+    const rows = t.products.map((p: any) => stripUndefined(fromProduct(normalizeProductPayload({ ...p, companyId: row.id, itemType: 'Producto', stock: null }))));
+    const { error } = await client.from("products").insert(rows);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, added: rows.length });
+  });
+
+  const parseImageDataUrl = (dataUrl: any) => {
+    const m = typeof dataUrl === 'string' && dataUrl.match(/^data:(image\/(webp|jpeg|png));base64,([A-Za-z0-9+/=]+)$/);
+    if (!m) return null;
+    const buffer = Buffer.from(m[3], 'base64');
+    return { mime: m[1], ext: m[2] === 'jpeg' ? 'jpg' : m[2], buffer };
+  };
+
+  app.post("/api/uploads/image", async (req, res) => {
+    const { user, client, row } = await getOwnedCompanyRow(req);
+    if (!user) return res.status(401).json({ error: "Unauthorized" });
+    if (!client || !row) return res.status(404).json({ error: "Company not found" });
+    const img = parseImageDataUrl(req.body?.dataUrl);
+    if (!img) return res.status(400).json({ error: "Imagen no válida" });
+    if (img.buffer.length > 2 * 1024 * 1024) return res.status(413).json({ error: "La imagen supera 2 MB" });
+    const objectPath = `${row.id}/${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${img.ext}`;
+    const storageClient = supabaseAdmin || client;
+    const { error } = await storageClient.storage.from('catalog-images').upload(objectPath, img.buffer, { contentType: img.mime, upsert: false, cacheControl: '31536000' });
+    if (error) return res.status(503).json({ error: "Storage no disponible", fallback: true });
+    const { data } = storageClient.storage.from('catalog-images').getPublicUrl(objectPath);
+    res.json({ url: data.publicUrl });
+  });
+
+  app.post("/api/renewal", async (req, res) => {
+    const { user, client, row } = await getOwnedCompanyRow(req);
+    if (!user) return res.status(401).json({ error: "Unauthorized" });
+    if (!client || !row) return res.status(404).json({ error: "Company not found" });
+    const plan = String(req.body?.plan || '');
+    const amount = computeSubscriptionAmount(plan);
+    if (amount === null) return res.status(400).json({ error: "Plan no reconocido" });
+    const img = parseImageDataUrl(req.body?.proofDataUrl);
+    if (!img) return res.status(400).json({ error: "Adjunta la captura de tu Yape" });
+    if (img.buffer.length > 3 * 1024 * 1024) return res.status(413).json({ error: "La captura supera 3 MB" });
+
+    let proofPath: string | null = `${row.id}/${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${img.ext}`;
+    const { error: upErr } = await (supabaseAdmin || client).storage.from('payment-proofs').upload(proofPath, img.buffer, { contentType: img.mime, upsert: false });
+    if (upErr) proofPath = null;
+
+    const writer = supabaseAdmin || client;
+    const payload: any = {
+      user_id: user.id, company_id: row.id, business_name: row.name, email: user.email || null,
+      plan, amount, payment_method: 'Yape',
+      reference: String(req.body?.reference || '').slice(0, 120) || (proofPath ? null : 'Captura no se pudo subir: pedir por WhatsApp'),
+      status: 'Pendiente', proof_path: proofPath,
+    };
+    let { error } = await writer.from("subscription_payments").insert(payload);
+    if (error && /proof_path/i.test(error.message || '')) {
+      delete payload.proof_path;
+      if (proofPath) payload.reference = `proof:${proofPath}`;
+      ({ error } = await writer.from("subscription_payments").insert(payload));
+    }
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, amount, proofUploaded: Boolean(proofPath) });
+  });
+
   app.get("/api/companies", (req, res) => {
     res.json(db.companies);
   });
@@ -2179,47 +2420,68 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
   app.post("/api/onboarding", async (req, res) => {
     let user = (req as any).user;
     if (!user) return res.status(401).json({ error: "Unauthorized" });
-    
-    const { name, isTrial } = req.body;
-    
+
+    const { name, whatsapp, rubro, useTemplate } = req.body || {};
+    const cleanName = String(name || '').trim().slice(0, 80);
+    if (!cleanName) return res.status(400).json({ error: "Escribe el nombre de tu negocio" });
+    if (!isValidWhatsapp(whatsapp)) {
+      return res.status(400).json({ error: "Ingresa un WhatsApp válido (ej. 987 654 321). Es por donde te llegarán los pedidos.", code: "WHATSAPP_REQUIRED" });
+    }
+    const template = (RUBRO_TEMPLATES as any)[rubro] || null;
+
+    // Todos los registros reciben 15 días de prueba calculados desde hoy.
     const trialDays = 15;
     const endsAt = new Date();
     endsAt.setDate(endsAt.getDate() + trialDays);
-    
+    const baseSlug = cleanName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, '') || 'mi-negocio';
+
     const company: any = {
       id: Date.now().toString(),
       userId: user.id,
-      name: name || "Mi Nueva Empresa",
-      slug: (name || "mi-empresa").toLowerCase().replace(/[^a-z0-9]+/g, "-") + "-" + Date.now(),
+      name: cleanName,
+      slug: baseSlug + "-" + Date.now(),
       // Keep billing plan compatible with DB CHECK constraint (companies_plan_check).
       plan: "Emprendedor",
-      subscriptionStatus: isTrial ? "Prueba Gratuita" : "Activa",
-      subscriptionEndsAt: isTrial ? endsAt.toISOString().split('T')[0] : "2026-08-15",
-      businessType: "Restaurante",
-      color: "#8b5cf6",
-      whatsapp: "",
+      subscriptionStatus: "Prueba Gratuita",
+      subscriptionEndsAt: endsAt.toISOString().split('T')[0],
+      businessType: template?.businessType || "Tienda",
+      color: "#6d28d9",
+      whatsapp: normalizeWhatsapp(whatsapp),
+      description: `Bienvenido a ${cleanName}. Elige tus productos y haz tu pedido por WhatsApp en segundos.`,
+      storeHoursType: "24h",
       logo: "",
       banner: "",
       instagram: "",
       facebook: "",
-      //  // currency
     };
+
+    const templateProducts = template && useTemplate !== false ? template.products : [];
 
     if (useSupabaseDb) {
       const client = supabaseAdmin || getRequestSupabase(req);
       if (!client) return res.status(503).json({ error: "Supabase is not configured" });
 
-      const { data, error } = await client
+      let { data, error } = await client
         .from("companies")
         .insert(stripUndefined(fromCompany(company)))
         .select("*")
         .single();
-
+      // Si la base rechaza el rubro (CHECK), reintenta con el valor por defecto.
+      if (error && /business_type|check/i.test(error.message || '')) {
+        ({ data, error } = await client.from("companies").insert(stripUndefined(fromCompany({ ...company, businessType: "Restaurante" }))).select("*").single());
+      }
       if (error) return res.status(500).json({ error: error.message });
+
+      if (templateProducts.length) {
+        const rows = templateProducts.map((p: any) => stripUndefined(fromProduct(normalizeProductPayload({ ...p, companyId: data.id, itemType: 'Producto', stock: null }))));
+        const { error: pErr } = await client.from("products").insert(rows);
+        if (pErr) console.warn("[onboarding] No se pudieron crear productos de ejemplo:", pErr.message);
+      }
       return res.json(toCompany(data));
     }
 
     db.companies.push(company as any);
+    templateProducts.forEach((p: any, i: number) => db.products.push({ id: `${Date.now()}${i}`, companyId: company.id, ...p }));
     res.json(company);
   });
 
@@ -2511,6 +2773,10 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
       const client = getRequestSupabase(req);
       if (!client) return res.status(503).json({ error: "Supabase is not configured" });
       if (!companyId) return res.status(400).json({ error: "companyId required" });
+      const reqUser = (req as any).user;
+      if (!reqUser) return res.status(401).json({ error: "Unauthorized" });
+      const { data: owned } = await client.from("companies").select("id").eq("id", companyId).eq("user_id", reqUser.id).maybeSingle();
+      if (!owned) return res.status(403).json({ error: "No tienes acceso a esta empresa" });
 
       // Esta ruta la usan tanto el dashboard autenticado (ProductsTab,
       // InventoryTab, PosSystem — necesitan purchase_cost/margin_percent)
@@ -2518,8 +2784,8 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
       // manda el header Authorization cuando hay una sesión real, así que
       // lo usamos para decidir si consultamos la tabla completa o la vista
       // pública sin datos de costo/margen.
-      const isAuthenticatedRequest = Boolean(req.headers.authorization);
-      const sourceTable = isAuthenticatedRequest ? "products" : "products_public";
+      // Solo el dueño autenticado llega aquí; el catálogo público usa /api/catalog/:slug.
+      const sourceTable = "products";
 
       let query = client
         .from(sourceTable)
@@ -2859,18 +3125,27 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
 
   // Orders
   app.post("/api/orders", async (req, res) => {
+    const isPublicOrder = !(req as any).user;
+    const body = { ...(req.body || {}) };
+    if (isPublicOrder) {
+      // Pedido desde el catálogo: siempre entra como "Nuevo" al panel del negocio.
+      body.type = 'online';
+      body.status = 'Nuevo';
+      body.items = Array.isArray(body.items) ? body.items.slice(0, 100) : [];
+      if (!body.companyId || body.items.length === 0) return res.status(400).json({ error: "Pedido vacío" });
+    }
     if (useSupabaseDb) {
       const client = getRequestSupabase(req);
       if (!client) return res.status(503).json({ error: "Supabase is not configured" });
 
-      const { data, error } = await client
-        .from("orders")
-        .insert(stripUndefined(fromOrder(req.body)))
-        .select("*")
-        .single();
-
+      // Inserción sin .select(): el visitante anónimo no tiene permiso de lectura.
+      let { error } = await client.from("orders").insert(stripUndefined(fromOrder(body)));
+      if (error && body.status === 'Nuevo' && /check|status/i.test(error.message || '')) {
+        // La base aún no tiene el estado "Nuevo" (falta v3.sql): se guarda como Pendiente.
+        ({ error } = await client.from("orders").insert(stripUndefined(fromOrder({ ...body, status: 'Pendiente' }))));
+      }
       if (error) return res.status(500).json({ error: error.message });
-      return res.json(toOrder(data));
+      return res.json({ ok: true, status: body.status || 'Pendiente' });
     }
 
     const newOrder = {
@@ -3569,10 +3844,46 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath, { index: false }));
-    app.get('*', (req, res, next) => {
+    const fs = await import('fs');
+    const indexHtml = fs.readFileSync(path.join(distPath, 'index.html'), 'utf8');
+    const esc = (v: any) => String(v ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const ogCache = new Map<string, { html: string; at: number }>();
+    const catalogHtml = async (slug: string) => {
+      const hit = ogCache.get(slug);
+      if (hit && Date.now() - hit.at < 5 * 60 * 1000) return hit.html;
+      if (!supabase) return null;
+      const { data } = await supabase.from('companies_public').select('name,description,logo,banner,slug').eq('slug', slug).maybeSingle();
+      if (!data) return null;
+      const img = [data.logo, data.banner].find((u: any) => typeof u === 'string' && /^https?:\/\//.test(u)) || `${publicBaseUrl}/og-image.png`;
+      const title = `${data.name} | Catálogo en WowSmart`;
+      const desc = data.description || `Mira el catálogo de ${data.name} y haz tu pedido por WhatsApp.`;
+      const url = `${publicBaseUrl}/c/${data.slug}`;
+      const html = indexHtml
+        .replace(/<title>[^<]*<\/title>/, `<title>${esc(title)}</title>`)
+        .replace(/(<meta property="og:title" content=")[^"]*/, `$1${esc(title)}`)
+        .replace(/(<meta property="og:description" content=")[^"]*/, `$1${esc(desc)}`)
+        .replace(/(<meta property="og:url" content=")[^"]*/, `$1${esc(url)}`)
+        .replace(/(<meta property="og:image" content=")[^"]*/, `$1${esc(img)}`)
+        .replace(/(<meta name="twitter:title" content=")[^"]*/, `$1${esc(title)}`)
+        .replace(/(<meta name="twitter:description" content=")[^"]*/, `$1${esc(desc)}`)
+        .replace(/(<meta name="twitter:image" content=")[^"]*/, `$1${esc(img)}`)
+        .replace(/(<meta name="description" content=")[^"]*/, `$1${esc(desc)}`)
+        .replace(/(<link rel="canonical" href=")[^"]*/, `$1${esc(url)}`);
+      ogCache.set(slug, { html, at: Date.now() });
+      return html;
+    };
+    app.get('*', async (req, res, next) => {
       if (req.path.startsWith('/api/') || req.path === '/api') return next();
+      const m = req.path.match(/^\/c\/([^/]+)\/?$/);
+      if (m) {
+        try {
+          const html = await catalogHtml(decodeURIComponent(m[1]));
+          if (html) return res.status(200).type('html').send(html);
+          return res.status(404).type('html').send(indexHtml);
+        } catch { /* cae al index normal */ }
+      }
       const known = /^\/(|auth|checkout(\/[^/]+)?|privacidad|terminos|legal|cookies|reclamaciones|dashboard|superadmin|c\/[^/]+)\/?$/.test(req.path);
-      res.status(known ? 200 : 404).sendFile(path.join(distPath, 'index.html'));
+      res.status(known ? 200 : 404).type('html').send(indexHtml);
     });
   }
 

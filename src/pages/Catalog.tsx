@@ -9,6 +9,16 @@ import { Company, Product } from "../types";
 import { apiClient } from "../services/api";
 import { resolveCatalogTaxRate, taxLabel } from "../utils/pricingCalculator";
 import { ImageUpload } from "../components/ImageUpload";
+import { normalizeWhatsapp } from "../config/templates";
+
+const track = (slug: string | undefined, type: string, productId?: string) => {
+  if (!slug) return;
+  try {
+    const body = JSON.stringify({ slug, type, productId });
+    if (navigator.sendBeacon) navigator.sendBeacon('/api/track', new Blob([body], { type: 'application/json' }));
+    else fetch('/api/track', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true });
+  } catch { /* sin métricas */ }
+};
 
 export default function Catalog() {
   const { slug } = useParams();
@@ -26,38 +36,14 @@ export default function Catalog() {
   
   const company = catalogData?.company || null;
   
-  const {
-    data: productsData,
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
-    isLoading: loadingProducts
-  } = useInfiniteQuery({
-    queryKey: ['catalogProducts', company?.id],
-    initialPageParam: 1,
-    queryFn: async ({ pageParam = 1 }) => {
-      const res = await apiClient.get(`/api/products?companyId=${company?.id}&page=${pageParam}&limit=20`);
-      return res;
-    },
-    getNextPageParam: (lastPage, allPages) => {
-      if (lastPage && lastPage.page < lastPage.totalPages) {
-        return lastPage.page + 1;
-      }
-      return undefined;
-    },
-    enabled: !!company?.id,
-  });
-
-  const products = useMemo(() => {
-    if (!productsData) return [];
-    return productsData.pages.flatMap((page: any) => page.data);
-  }, [productsData]);
-
-  useEffect(() => {
-    if (inView && hasNextPage) {
-      fetchNextPage();
-    }
-  }, [inView, hasNextPage, fetchNextPage]);
+  // El catálogo público solo usa /api/catalog/:slug (vista pública, sin stock ni costos).
+  const products: Product[] = useMemo(() => (catalogData?.products || []), [catalogData]);
+  const hasNextPage = false;
+  const isFetchingNextPage = false;
+  const fetchNextPage = () => {};
+  const loadingProducts = false;
+  useEffect(() => { if (company?.slug) track(company.slug, 'visit'); }, [company?.slug]);
+  const waNumber = normalizeWhatsapp(company?.whatsapp);
 
   const loading = loadingCompany || (loadingProducts && products.length === 0);
 
@@ -168,7 +154,10 @@ export default function Catalog() {
 
   const storeOpenStatus = React.useMemo(() => {
     if (!company || company.storeHoursType === '24h') return { isOpen: true };
-    if (!company.storeSchedule) return { isOpen: true };
+    // "Cerrado" solo si el negocio configuró su horario.
+    const schedule: any = company.storeSchedule;
+    const hasSchedule = schedule && Object.values(schedule).some((d: any) => d && typeof d.isOpen === 'boolean');
+    if (!hasSchedule) return { isOpen: true };
 
     const now = new Date();
     const day = now.getDay(); // 0 = Sunday, 1 = Monday, etc.
@@ -199,7 +188,8 @@ export default function Catalog() {
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-500">Cargando catálogo...</div>;
   if (!company) return <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-500">Catálogo no encontrado</div>;
 
-  const categories = ["Todos", ...Array.from(new Set(products.map(p => p.category)))];
+  const categories = ["Todos", ...Array.from(new Set(products.map(p => (p.category || '').trim()).filter(Boolean)))];
+  const categoryImage = (name: string) => company.categories?.find((c: any) => c.name === name)?.image;
   
   const filteredProducts = products.filter(p => 
     (activeCat === "Todos" || p.category === activeCat) &&
@@ -279,6 +269,10 @@ export default function Catalog() {
   };
 
   const sendToWhatsApp = async () => {
+    if (!waNumber) {
+      alert("Este negocio todavía no configuró su WhatsApp. Intenta más tarde.");
+      return;
+    }
     if (!deliveryData.recipient || !deliveryData.phone) {
       alert("Por favor completa tu nombre y número de WhatsApp.");
       return;
@@ -311,8 +305,12 @@ export default function Catalog() {
     if (deliveryMethod === 'delivery') {
       msg += `Dirección: ${deliveryData.address}\n`;
       if (deliveryData.reference) msg += `Referencia: ${deliveryData.reference}\n`;
+    } else if (company.address) {
+      msg += `Recojo en: ${company.address}\n`;
     }
     msg += `*Método de Pago:* ${cartPaymentMethod}\n`;
+    if (cartPaymentMethod === 'Yape' && company.yapeNumber) msg += `Yape del negocio: ${company.yapeNumber}\n`;
+    if (cartPaymentMethod === 'Plin' && company.plinNumber) msg += `Plin del negocio: ${company.plinNumber}\n`;
     if (cartPaymentMethod !== 'Efectivo') {
       msg += cartPaymentProof
         ? `✅ Comprobante de pago adjuntado, revisar pedido en el panel.\n`
@@ -347,8 +345,9 @@ export default function Catalog() {
     } catch(err) {
       console.error("Error guardando orden:", err);
     }
+    track(company.slug, 'whatsapp_click');
 
-    window.open(`https://wa.me/${company.whatsapp}?text=${encodeURIComponent(msg)}`, "_blank");
+    window.open(`https://wa.me/${waNumber}?text=${encodeURIComponent(msg)}`, "_blank");
   };
 
   const sendBulkQuoteToWhatsApp = () => {
@@ -370,7 +369,7 @@ export default function Catalog() {
     if (bulkQuoteForm.ruc) msg += `RUC: ${bulkQuoteForm.ruc}\n`;
     if (bulkQuoteForm.message) msg += `\nMensaje adicional:\n${bulkQuoteForm.message}\n`;
 
-    window.open(`https://wa.me/${company.whatsapp}?text=${encodeURIComponent(msg)}`, "_blank");
+    window.open(`https://wa.me/${waNumber}?text=${encodeURIComponent(msg)}`, "_blank");
     setBulkQuoteForm({ quantity: '', contactName: '', companyName: '', ruc: '', message: '' });
   };
 
@@ -413,7 +412,7 @@ export default function Catalog() {
           </div>
         )}
         <h1 className="text-4xl md:text-5xl font-extrabold mb-4 tracking-tight" style={{ color: company.color }}>{company.name}</h1>
-        <p className="text-slate-500 text-lg">Catálogo Digital Oficial</p>
+        <p className="text-slate-500 text-lg">{company.description || `Bienvenido al catálogo de ${company.name}. Elige tus productos y haz tu pedido por WhatsApp en segundos.`}</p>
       </section>
 
       {/* Social Media Floating Links */}
@@ -467,22 +466,7 @@ export default function Catalog() {
               </div>
               <span className="text-xs font-bold text-slate-700">Todos</span>
             </button>
-            {company.categories && company.categories.length > 0 ? company.categories.map(cat => (
-              <button 
-                key={cat.id}
-                onClick={() => setActiveCat(cat.name)}
-                className={`flex flex-col items-center justify-center min-w-[70px] p-2 rounded-2xl transition-all border shadow-sm ${
-                  activeCat === cat.name 
-                    ? `bg-indigo-50 border-indigo-200` 
-                    : 'bg-white border-slate-200 hover:bg-slate-50'
-                }`}
-              >
-                <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center overflow-hidden mb-1">
-                  {cat.image ? <img src={cat.image} className="w-full h-full object-cover" /> : <span className="text-xl">🏷️</span>}
-                </div>
-                <span className="text-xs font-bold text-slate-700 truncate w-full text-center">{cat.name}</span>
-              </button>
-            )) : categories.filter(c => c !== 'Todos').map(cat => (
+            {categories.filter(c => c !== 'Todos').map(cat => (
               <button 
                 key={cat}
                 onClick={() => setActiveCat(cat)}
@@ -492,8 +476,8 @@ export default function Catalog() {
                     : 'bg-white border-slate-200 hover:bg-slate-50'
                 }`}
               >
-                <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center text-xl mb-1">
-                  🏷️
+                <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center overflow-hidden text-xl mb-1">
+                  {categoryImage(cat) ? <img src={categoryImage(cat)} alt="" className="w-full h-full object-cover" /> : '🏷️'}
                 </div>
                 <span className="text-xs font-bold text-slate-700 truncate w-full text-center">{cat}</span>
               </button>
@@ -643,7 +627,7 @@ export default function Catalog() {
                   </div>
                 )}
                 {company.whatsapp && (
-                  <a href={`https://wa.me/${company.whatsapp}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 hover:text-white transition-colors">
+                  <a href={`https://wa.me/${waNumber}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 hover:text-white transition-colors">
                     <Phone className="w-4 h-4 flex-shrink-0" />
                     <span>{company.whatsapp}</span>
                   </a>
@@ -835,7 +819,7 @@ export default function Catalog() {
                             </div>
                           </div>
 
-                          <ImageUpload
+                          <ImageUpload upload={false}
                             label="Adjuntar comprobante (opcional, agiliza tu pedido)"
                             hint="Si lo adjuntas ahora, no tendrás que enviarlo por WhatsApp después."
                             value={cartPaymentProof}
@@ -1083,7 +1067,9 @@ export default function Catalog() {
                         : '';
                       const headerTitle = isServiceBusiness ? '*NUEVA SOLICITUD RÁPIDA*' : '*COMPRA RÁPIDA*';
                       const msg = `${headerTitle}\n\n${termProduct.slice(0, -1)}: ${selectedProduct.name}${variantStr}\nCantidad: ${qty}\nSubtotal: ${company.currency || 'S/'} ${quickSubtotal.toFixed(2)}\nIGV (18%): ${company.currency || 'S/'} ${quickTax.toFixed(2)}\nTotal: ${company.currency || 'S/'} ${quickTotal.toFixed(2)}`;
-                      window.open(`https://wa.me/${company.whatsapp}?text=${encodeURIComponent(msg)}`, "_blank");
+                      if (!waNumber) { alert("Este negocio todavía no configuró su WhatsApp."); return; }
+                      track(company.slug, 'whatsapp_click', selectedProduct?.id);
+                      window.open(`https://wa.me/${waNumber}?text=${encodeURIComponent(msg)}`, "_blank");
                     }}
                     disabled={!storeOpenStatus.isOpen}
                     className={`flex-1 rounded-xl text-white font-bold transition-colors shadow-sm ${!storeOpenStatus.isOpen ? 'opacity-50 cursor-not-allowed' : ''}`}

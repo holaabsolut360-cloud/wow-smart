@@ -29,7 +29,7 @@ export function OrdersTab({ company }: OrdersTabProps) {
 
   const updateStatusMutation = useMutation({
     mutationFn: async ({ id, status }: { id: string, status: string }) => {
-      await apiClient.put(`/api/orders/${id}`, { status });
+      await apiClient.put(`/api/orders/${id}/status`, { status });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['orders', company?.id] });
@@ -105,12 +105,14 @@ export function OrdersTab({ company }: OrdersTabProps) {
                           queryClient.invalidateQueries({ queryKey: ['orders'] });
                         }}
                         className={`mt-2 text-xs font-bold px-3 py-1.5 rounded-full border outline-none cursor-pointer ${
+                          order.status === 'Nuevo' ? 'bg-rose-50 text-rose-700 border-rose-200' :
                           order.status === 'Pendiente' ? 'bg-amber-50 text-amber-700 border-amber-200' :
                           order.status === 'Pagado' ? 'bg-blue-50 text-blue-700 border-blue-200' :
                           order.status === 'Enviado' ? 'bg-purple-50 text-purple-700 border-purple-200' :
                           'bg-emerald-50 text-emerald-700 border-emerald-200'
                         }`}
                       >
+                        <option value="Nuevo">Nuevo</option>
                         <option value="Pendiente">Pendiente</option>
                         <option value="Pagado">Pagado</option>
                         <option value="Enviado">Enviado</option>

@@ -5,6 +5,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { ShoppingCart, Mail, Lock, User, ArrowRight, ArrowLeft, ShieldCheck, CheckCircle2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import Logo from '../components/Logo';
+import { RUBRO_TEMPLATES, isValidWhatsapp } from '../config/templates';
 
 type AuthView = 'login' | 'register' | 'forgot-password' | 'reset-sent' | 'onboarding';
 
@@ -20,6 +21,9 @@ export default function Auth() {
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [companyName, setCompanyName] = useState('');
+  const [companyWhatsapp, setCompanyWhatsapp] = useState('');
+  const [rubro, setRubro] = useState<string>('tienda');
+  const [useTemplate, setUseTemplate] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
 
@@ -351,13 +355,17 @@ export default function Auth() {
               >
                 <div className="mb-8">
                   <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight mb-2">Crea tu Empresa</h2>
-                  <p className="text-slate-500">Para continuar, necesitamos el nombre de tu negocio.</p>
+                  <p className="text-slate-500">Paso 1 de 3 · Tus datos básicos. Tienes 15 días de prueba gratis, sin tarjeta.</p>
+                  <div className="mt-4 h-2 rounded-full bg-slate-100 overflow-hidden"><div className="h-full w-1/3 bg-gradient-to-r from-indigo-600 to-violet-600" /></div>
                 </div>
                                 <form onSubmit={async (e) => {
                   e.preventDefault();
+                  if (!isValidWhatsapp(companyWhatsapp)) {
+                    alert('Ingresa tu número de WhatsApp (ej. 987 654 321). Es por donde te llegarán los pedidos.');
+                    return;
+                  }
                   setIsLoading(true);
                   try {
-                    const isTrial = new URLSearchParams(window.location.search).get('trial') === 'true';
                     const session = await supabase.auth.getSession();
                     if (!session.data.session) {
                       alert('Primero confirma tu correo o inicia sesión para crear tu empresa.');
@@ -371,7 +379,7 @@ export default function Auth() {
                         'Content-Type': 'application/json',
                         'Authorization': 'Bearer ' + session.data.session.access_token
                       },
-                      body: JSON.stringify({ name: companyName, isTrial })
+                      body: JSON.stringify({ name: companyName, whatsapp: companyWhatsapp, rubro, useTemplate: rubro !== 'otro' && useTemplate })
                     });
 
                     if (!res.ok) {
@@ -402,9 +410,39 @@ export default function Auth() {
                       />
                     </div>
                   </div>
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-2">WhatsApp para recibir pedidos</label>
+                    <input
+                      type="tel"
+                      inputMode="tel"
+                      value={companyWhatsapp}
+                      onChange={(e) => setCompanyWhatsapp(e.target.value)}
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-slate-700 font-medium"
+                      placeholder="987 654 321"
+                      required
+                    />
+                    <p className="text-xs text-slate-400 mt-1">Sin esto tu catálogo no puede recibir pedidos. Si es de Perú, no hace falta poner +51.</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-2">¿A qué se dedica tu negocio?</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[...Object.entries(RUBRO_TEMPLATES).map(([k, t]) => ({ k, label: t.label, emoji: t.emoji })), { k: 'otro', label: 'Otro rubro', emoji: '✨' }].map(o => (
+                        <button type="button" key={o.k} onClick={() => setRubro(o.k)}
+                          className={`text-left px-3 py-2.5 rounded-xl border text-sm font-semibold transition-colors ${rubro === o.k ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                          <span className="mr-1">{o.emoji}</span>{o.label}
+                        </button>
+                      ))}
+                    </div>
+                    {rubro !== 'otro' && (
+                      <label className="flex items-center gap-2 mt-3 text-sm text-slate-600">
+                        <input type="checkbox" checked={useTemplate} onChange={e => setUseTemplate(e.target.checked)} className="accent-indigo-600" />
+                        Cargar 3 productos de ejemplo para editar (puedes borrarlos luego)
+                      </label>
+                    )}
+                  </div>
                   <button 
                     type="submit" 
-                    disabled={isLoading || !companyName}
+                    disabled={isLoading || !companyName || !companyWhatsapp}
                     className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md shadow-indigo-600/20 transition-all flex justify-center items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
                   >
                     {isLoading ? (

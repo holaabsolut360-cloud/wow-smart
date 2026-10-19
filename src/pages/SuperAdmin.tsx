@@ -1032,7 +1032,13 @@ export default function SuperAdmin() {
                             <span className="bg-indigo-50 text-indigo-700 px-2 py-1 rounded font-medium text-xs">{payment.plan}</span>
                           </td>
                           <td className="p-4 font-bold text-slate-800">S/ {payment.amount}</td>
-                          <td className="p-4 text-slate-600">{payment.method || '-'}</td>
+                          <td className="p-4 text-slate-600">
+                            {payment.method || '-'}
+                            {(payment as any).proofUrl && (
+                              <a href={(payment as any).proofUrl} target="_blank" rel="noopener noreferrer" className="block text-xs font-bold text-indigo-600 hover:underline mt-1">Ver captura</a>
+                            )}
+                            {!(payment as any).proofUrl && (payment as any).proofPath && <span className="block text-xs text-slate-400 mt-1">Captura adjunta</span>}
+                          </td>
                           <td className="p-4 flex gap-2">
                             <button onClick={() => handleApprovePayment(payment.id)} className="flex items-center gap-1 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 px-3 py-1.5 rounded-lg font-bold transition-colors">
                               <CheckCircle className="w-4 h-4" /> Aprobar
