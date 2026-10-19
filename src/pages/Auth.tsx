@@ -88,28 +88,21 @@ export default function Auth() {
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-blue-400">siguiente nivel.</span>
           </h1>
           <p className="text-slate-400 text-lg max-w-md">
-            Miles de emprendedores ya están gestionando sus catálogos y ventas por WhatsApp desde un solo lugar.
+            Gestiona tu catálogo, tus pedidos por WhatsApp y tus ventas desde un solo lugar.
           </p>
         </div>
 
         <div className="relative z-10 bg-slate-800/50 backdrop-blur-sm border border-slate-700/50 p-6 rounded-2xl max-w-md">
           <div className="flex items-center gap-4 mb-4">
             <div className="flex -space-x-3">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="w-10 h-10 rounded-full bg-slate-700 border-2 border-slate-800 flex items-center justify-center overflow-hidden">
-                  <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${i + 10}`} alt="User avatar" className="w-full h-full" />
+              {['L', 'V', 'A'].map((l) => (
+                <div key={l} className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500 border-2 border-slate-800 flex items-center justify-center text-white font-black">
+                  {l}
                 </div>
               ))}
             </div>
             <div className="text-sm">
-              <div className="flex items-center gap-1">
-                {[1, 2, 3, 4, 5].map((i) => (
-                  <svg key={i} className="w-4 h-4 text-amber-400" fill="currentColor" viewBox="0 0 20 20">
-                    <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                  </svg>
-                ))}
-              </div>
-              <span className="text-slate-300 font-medium">+5,000 negocios activos</span>
+              <span className="text-slate-300 font-medium">Lux, Varyk Watches y más negocios peruanos ya confían en nosotros</span>
             </div>
           </div>
         </div>
@@ -265,7 +258,7 @@ export default function Auth() {
                       required
                     />
                     <label htmlFor="terms" className="text-sm text-slate-600">
-                      Acepto los <a href="#" className="text-indigo-600 font-bold hover:underline">Términos de servicio</a> y la <a href="#" className="text-indigo-600 font-bold hover:underline">Política de privacidad</a>.
+                      Acepto los <a href="/terminos" target="_blank" rel="noopener noreferrer" className="text-indigo-600 font-bold hover:underline">Términos y Condiciones</a> y la <a href="/privacidad" target="_blank" rel="noopener noreferrer" className="text-indigo-600 font-bold hover:underline">Política de Privacidad</a>.
                     </label>
                   </div>
 

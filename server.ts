@@ -166,6 +166,25 @@ const defaultPaymentSettings = {
 };
 let localPaymentSettings = { ...defaultPaymentSettings };
 
+// Datos de pago de ejemplo: no se muestran a clientes (se les pide coordinar por WhatsApp).
+const PLACEHOLDER_PAYMENT_NAMES = ['wowsmart sac', ''];
+const PLACEHOLDER_PAYMENT_NUMBERS = ['999888777', '000000000', ''];
+const isPlaceholderPaymentSettings = (s: { companyName?: string; accountNumber?: string }) => {
+  const name = String(s?.companyName || '').trim().toLowerCase();
+  const num = String(s?.accountNumber || '').replace(/\D/g, '');
+  return PLACEHOLDER_PAYMENT_NAMES.includes(name) || PLACEHOLDER_PAYMENT_NUMBERS.includes(num);
+};
+const PUBLIC_WHATSAPP_NUMBER = (process.env.PUBLIC_WHATSAPP_NUMBER || '51901345791').replace(/\D/g, '');
+
+// Vencimiento calculado (no se escribe en la base): una suscripción "Activa" o
+// en "Prueba Gratuita" cuya fecha de fin ya pasó se considera "Vencida".
+const ENFORCE_SUBSCRIPTION_EXPIRY = process.env.ENFORCE_SUBSCRIPTION_EXPIRY === 'true';
+const computeSubscriptionStatus = (status: string | null | undefined, endsAt: string | null | undefined) => {
+  const st = status || 'Activa';
+  if ((st === 'Activa' || st === 'Prueba Gratuita') && endsAt && new Date(endsAt).getTime() < Date.now()) return 'Vencida';
+  return st;
+};
+
 const normalizePaymentSettings = (value: any) => ({
   companyName: typeof value?.companyName === 'string' && value.companyName.trim()
     ? value.companyName.trim()
@@ -211,6 +230,17 @@ async function startServer() {
     },
     crossOriginEmbedderPolicy: false,
   }));
+
+  const publicBaseUrl = (process.env.PUBLIC_BASE_URL || 'https://wow-smart.com').replace(/\/$/, '');
+  app.get("/robots.txt", (_req, res) => {
+    res.type("text/plain").send(`User-agent: *\nAllow: /\nDisallow: /dashboard\nDisallow: /superadmin\nDisallow: /checkout\nDisallow: /api/\n\nSitemap: ${publicBaseUrl}/sitemap.xml\n`);
+  });
+  app.get("/sitemap.xml", (_req, res) => {
+    const pages = ["/", "/auth", "/terminos", "/privacidad", "/legal", "/cookies", "/reclamaciones"];
+    const today = new Date().toISOString().split("T")[0];
+    const urls = pages.map(p => `  <url><loc>${publicBaseUrl}${p}</loc><lastmod>${today}</lastmod></url>`).join("\n");
+    res.type("application/xml").send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>\n`);
+  });
 
   app.get("/health", (_req, res) => {
     res.json({
@@ -964,7 +994,8 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
   }
 
   const effectiveStatus = useSupabaseDb ? company.subscription_status : company.subscriptionStatus;
-  const isBlocked = effectiveStatus === 'Vencida' || effectiveStatus === 'Suspendida';
+  const computedExpired = ENFORCE_SUBSCRIPTION_EXPIRY && computeSubscriptionStatus(effectiveStatus, endsAtRaw) === 'Vencida';
+  const isBlocked = effectiveStatus === 'Vencida' || effectiveStatus === 'Suspendida' || computedExpired;
 
   if (isBlocked && !isBillingRoute(path)) {
     return res.status(402).json({
@@ -1066,7 +1097,11 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
 
   app.get('/api/payment-settings', async (_req, res) => {
     try {
-      res.json(await readPaymentSettings());
+      const settings = await readPaymentSettings();
+      if (isPlaceholderPaymentSettings(settings)) {
+        return res.json({ configured: false, whatsapp: PUBLIC_WHATSAPP_NUMBER });
+      }
+      res.json({ configured: true, ...settings, whatsapp: PUBLIC_WHATSAPP_NUMBER });
     } catch (error: any) {
       res.status(500).json({ error: error.message || 'Unable to load payment settings' });
     }
@@ -1074,7 +1109,8 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
 
   app.get('/api/superadmin/settings/pagos', requireSuperAdmin, async (_req, res) => {
     try {
-      res.json(await readPaymentSettings());
+      const settings = await readPaymentSettings();
+      res.json({ ...settings, isPlaceholder: isPlaceholderPaymentSettings(settings) });
     } catch (error: any) {
       res.status(500).json({ error: error.message || 'Unable to load payment settings' });
     }
@@ -1098,7 +1134,7 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
         .upsert({ key: 'payment_settings', value: settings, updated_at: new Date().toISOString() }, { onConflict: 'key' });
 
       if (error) return res.status(500).json({ error: error.message });
-      return res.json(settings);
+      return res.json({ ...settings, isPlaceholder: isPlaceholderPaymentSettings(settings) });
     } catch (error: any) {
       return res.status(500).json({ error: error.message || 'Unable to save payment settings' });
     }
@@ -1399,7 +1435,8 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
         id: c.id,
         empresa: c.name,
         plan: c.plan,
-        estado: c.subscriptionStatus || "Activa",
+        estado: computeSubscriptionStatus(c.subscriptionStatus, c.subscriptionEndsAt),
+        estadoGuardado: c.subscriptionStatus || "Activa",
         vencimiento: c.subscriptionEndsAt || "-",
         precio: 0,
         metodoPago: "-",
@@ -1434,9 +1471,12 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
         id: c.id,
         empresa: c.name,
         plan: c.plan,
-        estado: c.subscription_status || "Activa",
-        vencimiento: c.subscription_ends_at || "-",
+        estado: computeSubscriptionStatus(c.subscription_status, c.subscription_ends_at),
+        estadoGuardado: c.subscription_status || "Activa",
+        vencimiento: c.subscription_ends_at ? String(c.subscription_ends_at).split("T")[0] : "-",
         precio: latestPayment ? Number(latestPayment.amount || 0) : 0,
+        precioLista: SUBSCRIPTION_PLAN_PRICES[c.plan] ?? null,
+        pagosAprobados: (paymentsResult.data || []).filter((p: any) => p.company_id === c.id).length,
         metodoPago: latestPayment ? latestPayment.payment_method || "-" : "-",
       };
     });
@@ -1493,7 +1533,7 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
 
     const [companiesResult, paymentsThisMonthResult, paymentsLastMonthResult, pendingPaymentsResult] = await Promise.all([
-      client.from("companies").select("id, subscription_status, created_at"),
+      client.from("companies").select("id, plan, subscription_status, subscription_ends_at, created_at"),
       client
         .from("subscription_payments")
         .select("amount")
@@ -1524,8 +1564,18 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
       ? Math.round(((ingresosMes - ingresosMesPasado) / ingresosMesPasado) * 100)
       : (ingresosMes > 0 ? 100 : 0);
 
-    const suscripcionesActivas = companies.filter((c: any) => c.subscription_status === "Activa").length;
+    const estados = companies.map((c: any) => computeSubscriptionStatus(c.subscription_status, c.subscription_ends_at));
+    const suscripcionesActivas = estados.filter((e: string) => e === "Activa").length;
+    const suscripcionesVencidas = estados.filter((e: string) => e === "Vencida").length;
+    const enPrueba = estados.filter((e: string) => e === "Prueba Gratuita").length;
     const retencionPct = totalEmpresas > 0 ? Math.round((suscripcionesActivas / totalEmpresas) * 100) : 0;
+    // Ingreso mensual recurrente real: solo suscripciones vigentes con al menos un pago aprobado.
+    const { data: allApproved } = await client.from("subscription_payments").select("company_id, amount").eq("status", "Aprobado");
+    const pagadoras = new Set((allApproved || []).map((p: any) => p.company_id));
+    const mrr = companies
+      .filter((c: any, i: number) => estados[i] === "Activa" && pagadoras.has(c.id))
+      .reduce((sum: number, c: any) => sum + (SUBSCRIPTION_PLAN_PRICES[c.plan] || 0), 0);
+    const ingresosTotales = (allApproved || []).reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
 
     res.json({
       totalEmpresas,
@@ -1535,6 +1585,11 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
       suscripcionesActivas,
       retencionPct,
       pagosPendientes: pendingPaymentsResult.count || 0,
+      suscripcionesVencidas,
+      enPrueba,
+      empresasPagadoras: pagadoras.size,
+      mrr,
+      ingresosTotales,
     });
   });
 
@@ -1555,7 +1610,7 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
 
     const { data, error } = await client
       .from("companies")
-      .select("id, name, plan, subscription_status, created_at")
+      .select("id, name, plan, subscription_status, subscription_ends_at, created_at")
       .order("created_at", { ascending: false });
 
     if (error) return res.status(500).json({ error: error.message });
@@ -1564,7 +1619,7 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
       id: row.id,
       nombre: row.name,
       plan: row.plan,
-      estado: row.subscription_status || "Activa",
+      estado: computeSubscriptionStatus(row.subscription_status, row.subscription_ends_at),
       registro: row.created_at ? row.created_at.split("T")[0] : "",
     }));
 
@@ -1607,6 +1662,40 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     );
 
     res.json({ id: data.id, estado: data.subscription_status });
+  });
+
+  // ==================== VISTAS DE SOLO LECTURA ====================
+  app.get("/api/superadmin/productos", requireSuperAdmin, async (_req, res) => {
+    if (!useSupabaseDb) return res.json({ data: (db.products || []).map((p: any) => ({
+      id: p.id, nombre: p.name, precio: p.price, stock: p.stock, categoria: p.category,
+      empresa: db.companies.find((c: any) => c.id === p.companyId)?.name || "-", creado: p.createdAt,
+    })) });
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+    const [prods, comps] = await Promise.all([
+      client.from("products").select("id, name, price, stock, category, company_id, created_at").order("created_at", { ascending: false }).limit(1000),
+      client.from("companies").select("id, name"),
+    ]);
+    if (prods.error) return res.status(500).json({ error: prods.error.message });
+    const names: Record<string, string> = {};
+    (comps.data || []).forEach((c: any) => { names[c.id] = c.name; });
+    res.json({ data: (prods.data || []).map((p: any) => ({
+      id: p.id, nombre: p.name, precio: p.price, stock: p.stock, categoria: p.category,
+      empresa: names[p.company_id] || p.company_id || "-", creado: p.created_at,
+    })) });
+  });
+
+  app.get("/api/superadmin/auth-users", requireSuperAdmin, async (_req, res) => {
+    if (!supabaseAdmin) return res.status(503).json({ error: "Falta SUPABASE_SERVICE_ROLE_KEY en el servidor." });
+    const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 200 });
+    if (error) return res.status(500).json({ error: error.message });
+    const { data: comps } = await supabaseAdmin.from("companies").select("name, user_id");
+    const byUser: Record<string, string[]> = {};
+    (comps || []).forEach((c: any) => { if (c.user_id) (byUser[c.user_id] ||= []).push(c.name); });
+    res.json({ data: (data?.users || []).map((u: any) => ({
+      id: u.id, email: u.email, creado: u.created_at, ultimoAcceso: u.last_sign_in_at,
+      confirmado: Boolean(u.email_confirmed_at), empresas: byUser[u.id] || [],
+    })) });
   });
 
   // ==================== USUARIOS ADMINISTRADORES ====================
@@ -3479,9 +3568,11 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+    app.use(express.static(distPath, { index: false }));
+    app.get('*', (req, res, next) => {
+      if (req.path.startsWith('/api/') || req.path === '/api') return next();
+      const known = /^\/(|auth|checkout(\/[^/]+)?|privacidad|terminos|legal|cookies|reclamaciones|dashboard|superadmin|c\/[^/]+)\/?$/.test(req.path);
+      res.status(known ? 200 : 404).sendFile(path.join(distPath, 'index.html'));
     });
   }
 
@@ -3558,6 +3649,11 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     const batch = { id: Date.now().toString(), ...req.body };
     db.batches.push(batch);
     res.json(batch);
+  });
+
+  // Rutas de API inexistentes: siempre JSON 404 (nunca el HTML de la SPA).
+  app.use('/api', (_req, res) => {
+    res.status(404).json({ error: 'Ruta no encontrada', code: 'NOT_FOUND' });
   });
 
   app.listen(PORT, "0.0.0.0", () => {

@@ -23,7 +23,9 @@ import {
   CheckCircle,
   XCircle,
   Image as ImageIcon,
-  FileText
+  FileText,
+  ShoppingBag,
+  UserCircle
 } from 'lucide-react';
 
 export default function SuperAdmin() {
@@ -46,7 +48,27 @@ export default function SuperAdmin() {
   const [pagosLoading, setPagosLoading] = useState(false);
   const [pagosError, setPagosError] = useState('');
 
-  const [paymentSettings, setPaymentSettings] = useState({ companyName: 'WowSmart SAC', accountNumber: '999 888 777' });
+  const [paymentSettings, setPaymentSettings] = useState<any>({ companyName: '', accountNumber: '', isPlaceholder: true });
+
+  // Vistas de solo lectura: productos y cuentas de Supabase Auth
+  const [productosSA, setProductosSA] = useState<any[]>([]);
+  const [productosError, setProductosError] = useState('');
+  const [authUsers, setAuthUsers] = useState<any[]>([]);
+  const [authUsersError, setAuthUsersError] = useState('');
+  const fetchReadOnly = async () => {
+    try {
+      const r = await fetch('/api/superadmin/productos');
+      const j = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(j?.error || 'No se pudieron cargar los productos');
+      setProductosSA(j?.data || []); setProductosError('');
+    } catch (e: any) { setProductosError(e.message); }
+    try {
+      const r = await fetch('/api/superadmin/auth-users');
+      const j = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(j?.error || 'No se pudieron cargar las cuentas');
+      setAuthUsers(j?.data || []); setAuthUsersError('');
+    } catch (e: any) { setAuthUsersError(e.message); }
+  };
   const [paymentSettingsLoading, setPaymentSettingsLoading] = useState(false);
 
   const fetchPaymentSettings = async () => {
@@ -527,6 +549,7 @@ export default function SuperAdmin() {
       fetchCrmLeads();
       fetchReclamos();
       fetchPaymentSettings();
+      fetchReadOnly();
     }
   }, [isAuthenticated]);
 
@@ -653,6 +676,8 @@ export default function SuperAdmin() {
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'empresas', label: 'Empresas', icon: Building2 },
+    { id: 'productos', label: 'Productos', icon: ShoppingBag },
+    { id: 'cuentas', label: 'Cuentas de Usuarios', icon: UserCircle },
     { id: 'suscripciones', label: 'Suscripciones', icon: CreditCard },
     { id: 'planes', label: 'Planes', icon: Package },
     { id: 'funcionalidades', label: 'Funcionalidades', icon: Blocks },
@@ -874,6 +899,92 @@ export default function SuperAdmin() {
                     {dashboardLoading ? '' : 'por revisar'}
                   </div>
                 </div>
+                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                  <div className="text-slate-500 text-sm font-bold mb-2">Suscripciones Vencidas</div>
+                  <div className="text-4xl font-black text-rose-600">{dashboardLoading ? '—' : (dashboardStats?.suscripcionesVencidas ?? 0)}</div>
+                  <div className="text-slate-400 text-sm font-bold mt-2">según fecha de vencimiento</div>
+                </div>
+                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                  <div className="text-slate-500 text-sm font-bold mb-2">Ingreso Mensual Recurrente</div>
+                  <div className="text-4xl font-black text-slate-800">{dashboardLoading ? '—' : `S/ ${dashboardStats?.mrr ?? 0}`}</div>
+                  <div className="text-slate-400 text-sm font-bold mt-2">{dashboardLoading ? '' : `${dashboardStats?.empresasPagadoras ?? 0} empresa(s) con pago aprobado`}</div>
+                </div>
+                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                  <div className="text-slate-500 text-sm font-bold mb-2">Ingresos Totales</div>
+                  <div className="text-4xl font-black text-slate-800">{dashboardLoading ? '—' : `S/ ${dashboardStats?.ingresosTotales ?? 0}`}</div>
+                  <div className="text-slate-400 text-sm font-bold mt-2">pagos aprobados históricos</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'productos' && (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="p-6 border-b border-slate-200">
+                <h2 className="text-lg font-bold text-slate-800">Productos de todas las empresas</h2>
+                <p className="text-slate-500 text-sm">Vista de solo lectura ({productosSA.length} productos).</p>
+              </div>
+              {productosError && <div className="m-6 p-3 rounded-lg bg-rose-50 text-rose-700 text-sm">{productosError}</div>}
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
+                      <th className="p-4 font-bold border-b border-slate-200">Producto</th>
+                      <th className="p-4 font-bold border-b border-slate-200">Empresa</th>
+                      <th className="p-4 font-bold border-b border-slate-200">Categoría</th>
+                      <th className="p-4 font-bold border-b border-slate-200">Precio (S/)</th>
+                      <th className="p-4 font-bold border-b border-slate-200">Stock</th>
+                      <th className="p-4 font-bold border-b border-slate-200">Creado</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-sm">
+                    {productosSA.length === 0 && !productosError && <tr><td colSpan={6} className="p-6 text-center text-slate-400">No hay productos registrados.</td></tr>}
+                    {productosSA.map((p: any) => (
+                      <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50">
+                        <td className="p-4 font-bold text-slate-800">{p.nombre}</td>
+                        <td className="p-4 text-slate-600">{p.empresa}</td>
+                        <td className="p-4 text-slate-600">{p.categoria || '-'}</td>
+                        <td className="p-4 text-slate-600">{p.precio ?? '-'}</td>
+                        <td className="p-4 text-slate-600">{p.stock ?? '-'}</td>
+                        <td className="p-4 text-slate-500">{p.creado ? new Date(p.creado).toLocaleDateString('es-PE') : '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'cuentas' && (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="p-6 border-b border-slate-200">
+                <h2 className="text-lg font-bold text-slate-800">Cuentas de usuarios (Supabase Auth)</h2>
+                <p className="text-slate-500 text-sm">Vista de solo lectura ({authUsers.length} cuentas). Las cuentas sin empresa pueden ser registros incompletos o de prueba.</p>
+              </div>
+              {authUsersError && <div className="m-6 p-3 rounded-lg bg-rose-50 text-rose-700 text-sm">{authUsersError}</div>}
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
+                      <th className="p-4 font-bold border-b border-slate-200">Correo</th>
+                      <th className="p-4 font-bold border-b border-slate-200">Empresa</th>
+                      <th className="p-4 font-bold border-b border-slate-200">Correo confirmado</th>
+                      <th className="p-4 font-bold border-b border-slate-200">Registro</th>
+                      <th className="p-4 font-bold border-b border-slate-200">Último acceso</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-sm">
+                    {authUsers.map((u: any) => (
+                      <tr key={u.id} className="border-b border-slate-100 hover:bg-slate-50">
+                        <td className="p-4 font-bold text-slate-800">{u.email}</td>
+                        <td className="p-4 text-slate-600">{u.empresas?.length ? u.empresas.join(', ') : <span className="text-amber-600 font-medium">Sin empresa</span>}</td>
+                        <td className="p-4">{u.confirmado ? <span className="px-2 py-1 rounded text-xs font-medium bg-emerald-100 text-emerald-700">Sí</span> : <span className="px-2 py-1 rounded text-xs font-medium bg-slate-100 text-slate-500">No</span>}</td>
+                        <td className="p-4 text-slate-500">{u.creado ? new Date(u.creado).toLocaleDateString('es-PE') : '-'}</td>
+                        <td className="p-4 text-slate-500">{u.ultimoAcceso ? new Date(u.ultimoAcceso).toLocaleString('es-PE') : 'Nunca'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
@@ -975,7 +1086,7 @@ export default function SuperAdmin() {
                         <td className="p-4">
                           <span className={`px-2 py-1 rounded font-medium text-xs ${
                             empresa.estado === 'Activa' ? 'bg-emerald-100 text-emerald-700' : 
-                            empresa.estado === 'Suspendida' ? 'bg-rose-100 text-rose-700' : 
+                            empresa.estado === 'Suspendida' || empresa.estado === 'Vencida' ? 'bg-rose-100 text-rose-700' : 
                             'bg-amber-100 text-amber-700'
                           }`}>
                             {empresa.estado}
@@ -1001,7 +1112,7 @@ export default function SuperAdmin() {
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
               <div className="p-6 border-b border-slate-200 flex items-center justify-between">
                 <div>
-                  <h2 className="text-lg font-bold text-slate-800">Suscripciones Activas</h2>
+                  <h2 className="text-lg font-bold text-slate-800">Suscripciones</h2>
                   <p className="text-slate-500 text-sm">Gestiona renovaciones y estados de suscripción.</p>
                 </div>
               </div>
@@ -1032,13 +1143,16 @@ export default function SuperAdmin() {
                       <tr key={sub.id} className="border-b border-slate-100 hover:bg-slate-50">
                         <td className="p-4 font-bold text-slate-800">{sub.empresa}</td>
                         <td className="p-4 text-slate-600">{sub.plan}</td>
-                        <td className="p-4 text-slate-600">{sub.precio || '-'}</td>
+                        <td className="p-4 text-slate-600">{sub.precio ? sub.precio : <span title="Precio de lista; sin pagos aprobados">{sub.precioLista != null ? `${sub.precioLista} (sin pago)` : '-'}</span>}</td>
                         <td className="p-4">
                           <span className={`px-2 py-1 rounded font-medium text-xs ${
-                            sub.estado === 'Activa' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'
+                            sub.estado === 'Activa' ? 'bg-emerald-100 text-emerald-700' : sub.estado === 'Prueba Gratuita' ? 'bg-indigo-100 text-indigo-700' : 'bg-rose-100 text-rose-700'
                           }`}>
                             {sub.estado}
                           </span>
+                          {sub.estadoGuardado && sub.estadoGuardado !== sub.estado && (
+                            <div className="text-[11px] text-slate-400 mt-1">En la base: {sub.estadoGuardado}</div>
+                          )}
                         </td>
                         <td className="p-4 text-slate-500">{sub.metodoPago || '-'}</td>
                         <td className="p-4 text-slate-600">{sub.vencimiento}</td>
@@ -1059,6 +1173,11 @@ export default function SuperAdmin() {
                 <div>
                   <h2 className="text-xl font-bold text-slate-800">Configuración General</h2>
                   <p className="text-slate-500 text-sm">Gestiona la información de cobro y datos de la empresa principal.</p>
+                  {paymentSettings?.isPlaceholder && (
+                    <div className="mt-3 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm font-medium">
+                      Los datos de pago actuales son de ejemplo. Mientras no los cambies, a los clientes se les mostrará "Coordina tu pago por WhatsApp" en lugar de estos datos.
+                    </div>
+                  )}
                 </div>
               </div>
               

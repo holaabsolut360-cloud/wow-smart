@@ -1,19 +1,21 @@
-import { motion } from "motion/react";
 import { Link } from "react-router-dom";
 import { CheckCircle, LayoutDashboard, ShoppingBag, Zap, ShoppingCart, ChevronDown, Phone, Mail, MapPin } from "lucide-react";
 import Logo from '../components/Logo';
+import { DEMO_CATALOG_SLUG } from '../config/site';
 
 export default function Landing() {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex flex-col selection:bg-indigo-200">
       {/* Navbar */}
-      <nav className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-6 md:px-10 flex-shrink-0">
+      <nav className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-4 md:px-10 flex-shrink-0 sticky top-0 z-40">
         <div className="flex items-center gap-2">
           <Logo size="md" />
         </div>
-        <div className="flex items-center gap-8 text-sm font-medium text-slate-600">
-          <Link to="/auth" className="hidden md:block hover:text-indigo-600 transition-colors">Iniciar Sesión</Link>
-          <Link to="/auth?mode=register&trial=true" className="bg-indigo-600 text-white px-5 py-2.5 rounded-full hover:bg-indigo-700 transition-colors shadow-sm">
+        <div className="flex items-center gap-4 md:gap-8 text-sm font-medium text-slate-600">
+          <a href="#planes" className="hidden md:block hover:text-indigo-600 transition-colors">Planes</a>
+          <a href="#demo" className="hidden md:block hover:text-indigo-600 transition-colors">Demo</a>
+          <Link to="/auth" className="font-semibold text-slate-700 hover:text-indigo-600 transition-colors">Ingresar</Link>
+          <Link to="/auth?mode=register&trial=true" className="bg-indigo-600 text-white px-4 md:px-5 py-2.5 rounded-full hover:bg-indigo-700 transition-colors shadow-sm">
             Prueba Gratuita
           </Link>
         </div>
@@ -22,35 +24,58 @@ export default function Landing() {
       {/* Hero */}
       <main className="flex-grow flex flex-col items-center justify-center p-6 md:p-10">
         <section className="text-center max-w-3xl mb-16 mt-10">
-          <motion.h1 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="text-4xl md:text-5xl lg:text-6xl font-extrabold text-slate-900 mb-6 tracking-tight leading-tight"
-          >
-            Escala tu negocio con catálogos digitales inteligentes
-          </motion.h1>
-          <motion.p 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
-            className="text-lg md:text-xl text-slate-500 max-w-2xl mx-auto mb-10"
+          <h1 className="text-[2.1rem] leading-[1.15] md:text-5xl lg:text-6xl font-black text-slate-900 mb-6 tracking-tight md:leading-tight">
+            Escala tu negocio con{' '}
+            <span className="bg-gradient-to-r from-indigo-600 to-fuchsia-500 bg-clip-text text-transparent">catálogos digitales inteligentes</span>
+          </h1>
+          <p
+            className="text-lg md:text-xl text-slate-600 max-w-2xl mx-auto mb-10"
           >
             Crea tu propia tienda, agrega productos, recibe pedidos directo a tu WhatsApp y escala tus ventas. Todo en un solo lugar.
-          </motion.p>
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-            className="flex justify-center gap-4"
+          </p>
+          <div
+            className="flex flex-col sm:flex-row justify-center gap-3 sm:gap-4"
           >
-            <Link to="/checkout/emprendedor" className="px-8 py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-sm transition-colors">
-              Empezar ahora
+            <Link to="/auth?mode=register&trial=true" className="px-8 py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-sm transition-colors">
+              Empezar gratis
             </Link>
-          </motion.div>
+            <a href="#demo" className="px-8 py-3.5 rounded-xl border-2 border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-50 font-semibold transition-colors">
+              Ver demo
+            </a>
+          </div>
+        </section>
+
+        {/* Clientes (texto real, sin cifras infladas) */}
+        <section className="text-center mb-16 px-4">
+          <p className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-4">Negocios que ya confían en nosotros</p>
+          <div className="flex flex-wrap justify-center gap-3">
+            {['Lux', 'Varyk Watches', 'Absolut360'].map(n => (
+              <span key={n} className="px-5 py-2 rounded-full bg-white border border-slate-200 text-slate-700 font-bold shadow-sm">{n}</span>
+            ))}
+          </div>
+        </section>
+
+        {/* Demo */}
+        <section id="demo" className="w-full max-w-5xl mb-20 px-4 scroll-mt-24">
+          <div className="rounded-3xl bg-gradient-to-br from-indigo-600 to-fuchsia-600 p-8 md:p-12 text-white shadow-xl flex flex-col md:flex-row items-center gap-8">
+            <div className="flex-1 text-center md:text-left">
+              <p className="text-xs font-bold uppercase tracking-widest text-indigo-100 mb-3">Demo en vivo</p>
+              <h2 className="text-3xl font-extrabold tracking-tight mb-3">Mira un catálogo real funcionando</h2>
+              <p className="text-indigo-100 text-lg">Así ven tus clientes tu tienda: productos con foto y precio, carrito y pedido directo a tu WhatsApp. Sin registrarte.</p>
+            </div>
+            <div className="flex flex-col gap-3 w-full md:w-auto">
+              <Link to={`/c/${DEMO_CATALOG_SLUG}`} className="text-center px-8 py-3.5 rounded-xl bg-white text-indigo-700 font-bold hover:bg-indigo-50 shadow-sm transition-colors">
+                Ver catálogo de ejemplo
+              </Link>
+              <Link to="/auth?mode=register&trial=true" className="text-center px-8 py-3.5 rounded-xl border-2 border-white/60 text-white font-bold hover:bg-white/10 transition-colors">
+                Crear el mío gratis
+              </Link>
+            </div>
+          </div>
         </section>
 
         {/* Pricing Header */}
-        <section className="text-center mb-12 max-w-3xl mx-auto px-4">
+        <section id="planes" className="scroll-mt-24 text-center mb-12 max-w-3xl mx-auto px-4">
           <h2 className="text-3xl font-extrabold text-slate-900 mb-4 tracking-tight">Elige cómo quieres comenzar</h2>
           <p className="text-lg text-slate-500">Puedes probar WOW SMART completamente gratis durante 15 días o contratar el plan que mejor se adapte a tu negocio desde hoy.</p>
         </section>
@@ -236,6 +261,48 @@ export default function Landing() {
           </div>
         </section>
 
+        {/* Comparativa de planes */}
+        <section className="w-full max-w-4xl mb-10 px-4">
+          <h3 className="text-2xl font-extrabold text-slate-900 text-center mb-6">Compara los planes</h3>
+          <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <table className="w-full text-sm text-left">
+              <thead>
+                <tr className="bg-slate-50 text-slate-600">
+                  <th className="p-4 font-bold">Incluye</th>
+                  <th className="p-4 font-bold text-center">Emprendedor</th>
+                  <th className="p-4 font-bold text-center bg-indigo-50 text-indigo-700">Negocio Pequeño ⭐</th>
+                  <th className="p-4 font-bold text-center">Empresa</th>
+                </tr>
+              </thead>
+              <tbody className="text-slate-700">
+                {[
+                  ['Precio', 'S/ 15', 'S/ 39', 'S/ 79'],
+                  ['Productos', 'Hasta 50', 'Hasta 300', 'Hasta 700'],
+                  ['Usuarios', '1', 'Hasta 3', 'Multiusuario'],
+                  ['Catálogo digital y pedidos por WhatsApp', '✓', '✓', '✓'],
+                  ['Punto de venta, inventario y caja', '—', '✓', '✓'],
+                  ['CRM y reportes de ventas', '—', '✓', '✓ (avanzados)'],
+                  ['Cupones, fidelización y sucursales', '—', '—', '✓'],
+                  ['Dominio personalizado', '—', '—', '✓'],
+                ].map(([label, a, b, c]) => (
+                  <tr key={label} className="border-t border-slate-100">
+                    <td className="p-4 font-medium">{label}</td>
+                    <td className="p-4 text-center">{a}</td>
+                    <td className="p-4 text-center bg-indigo-50/60 font-semibold text-indigo-800">{b}</td>
+                    <td className="p-4 text-center">{c}</td>
+                  </tr>
+                ))}
+                <tr className="border-t border-slate-100">
+                  <td className="p-4"></td>
+                  <td className="p-3 text-center"><Link to="/checkout/emprendedor" className="inline-block px-4 py-2 rounded-lg border-2 border-slate-200 font-bold text-slate-700 hover:bg-slate-50">Elegir</Link></td>
+                  <td className="p-3 text-center bg-indigo-50/60"><Link to="/checkout/negocio" className="inline-block px-4 py-2 rounded-lg bg-indigo-600 font-bold text-white hover:bg-indigo-700">Elegir</Link></td>
+                  <td className="p-3 text-center"><Link to="/checkout/empresa" className="inline-block px-4 py-2 rounded-lg border-2 border-slate-200 font-bold text-slate-700 hover:bg-slate-50">Elegir</Link></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
         <section className="text-center mb-20 max-w-3xl mx-auto px-4">
           <p className="text-lg text-slate-500">¿Necesitas comenzar hoy mismo? Elige un plan y actívalo al instante.</p>
         </section>
@@ -324,6 +391,7 @@ export default function Landing() {
           <div>
             <h3 className="text-fuchsia-500 font-bold text-lg mb-4">Enlaces Legales</h3>
             <ul className="space-y-3 text-sm">
+              <li><Link to="/terminos" className="hover:text-fuchsia-400 transition-colors">Términos y Condiciones</Link></li>
               <li><Link to="/privacidad" className="hover:text-fuchsia-400 transition-colors">Política de Privacidad</Link></li>
               <li><Link to="/legal" className="hover:text-fuchsia-400 transition-colors">Aviso Legal</Link></li>
               <li><Link to="/cookies" className="hover:text-fuchsia-400 transition-colors">Política de Cookies</Link></li>

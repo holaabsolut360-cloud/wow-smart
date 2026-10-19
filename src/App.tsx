@@ -44,6 +44,9 @@ import PrivacyPolicy from "./pages/PrivacyPolicy";
 import LegalNotice from "./pages/LegalNotice";
 import CookiesPolicy from "./pages/CookiesPolicy";
 import ComplaintsBook from "./pages/ComplaintsBook";
+import Terms from "./pages/Terms";
+import NotFound from "./pages/NotFound";
+import WhatsAppButton from "./components/WhatsAppButton";
 
 const queryClient = new QueryClient();
 export default function App() {
@@ -56,6 +59,7 @@ export default function App() {
         <Route path="/auth" element={<Auth />} />
         <Route path="/checkout/:planId" element={<Checkout />} />
         <Route path="/checkout" element={<Checkout />} />
+        <Route path="/terminos" element={<Terms />} />
         <Route path="/privacidad" element={<PrivacyPolicy />} />
         <Route path="/legal" element={<LegalNotice />} />
         <Route path="/cookies" element={<CookiesPolicy />} />
@@ -63,7 +67,9 @@ export default function App() {
         <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
         <Route path="/c/:slug" element={<Catalog />} />
         <Route path="/superadmin" element={<ProtectedRoute><SuperAdmin /></ProtectedRoute>} />
+        <Route path="*" element={<NotFound />} />
       </Routes>
+      <WhatsAppButton />
     </BrowserRouter>
     </QueryClientProvider>
   );

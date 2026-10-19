@@ -1,75 +1,74 @@
-import React from 'react';
-import { Link } from 'react-router-dom';
-import Logo from '../components/Logo';
+import LegalLayout from '../components/LegalLayout';
+import { COMPANY_LEGAL } from '../config/site';
 
 export default function PrivacyPolicy() {
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex flex-col">
-      <nav className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-6 md:px-10 flex-shrink-0">
-        <Link to="/" className="flex items-center gap-2">
-          <Logo size="md" />
-        </Link>
-        <div className="flex items-center gap-8 text-sm font-medium text-slate-600">
-          <Link to="/" className="hover:text-indigo-600 transition-colors">Volver al inicio</Link>
-        </div>
-      </nav>
+    <LegalLayout title="Política de Privacidad">
+      <p>Última actualización: 19 de octubre de 2026</p>
+      <p>
+        En WowSmart cuidamos tus datos personales. Esta política explica qué datos recogemos, para qué los usamos y
+        cuáles son tus derechos, según la Ley N.º 29733, Ley de Protección de Datos Personales, y su Reglamento.
+      </p>
 
-      <main className="flex-grow max-w-4xl mx-auto px-6 py-12 w-full">
-        <h1 className="text-4xl font-extrabold text-slate-900 mb-8">Política de Privacidad</h1>
-        
-        <div className="prose prose-slate max-w-none prose-h2:text-2xl prose-h2:font-bold prose-h2:mt-8 prose-h2:mb-4 prose-p:text-slate-600 prose-p:leading-relaxed">
-          <p>Última actualización: {new Date().toLocaleDateString('es-PE')}</p>
-          
-          <h2>1. Información que recopilamos</h2>
-          <p>
-            En WowSmart, recopilamos información que usted nos proporciona directamente cuando utiliza nuestros servicios, 
-            crea una cuenta, realiza una compra o se comunica con nosotros. Esta información puede incluir su nombre, 
-            dirección de correo electrónico, número de teléfono, información de facturación y detalles de su negocio.
-          </p>
+      <h2>1. Responsable</h2>
+      <p>
+        {COMPANY_LEGAL.name}, RUC {COMPANY_LEGAL.ruc}, Lima, Perú. Correo de contacto:{' '}
+        <a href={`mailto:${COMPANY_LEGAL.email}`} className="text-indigo-600 font-semibold hover:underline">{COMPANY_LEGAL.email}</a>.
+      </p>
 
-          <h2>2. Uso de la información</h2>
-          <p>
-            Utilizamos la información que recopilamos para:
-          </p>
-          <ul className="list-disc pl-6 text-slate-600 mb-6">
-            <li>Proporcionar, mantener y mejorar nuestros servicios.</li>
-            <li>Procesar transacciones y enviarle avisos relacionados.</li>
-            <li>Enviarle comunicaciones técnicas, actualizaciones y alertas de seguridad.</li>
-            <li>Responder a sus comentarios, preguntas y solicitudes de servicio al cliente.</li>
-          </ul>
+      <h2>2. Datos que recogemos</h2>
+      <ul>
+        <li><strong>De tu cuenta:</strong> nombre, correo, teléfono, nombre y datos de tu negocio.</li>
+        <li><strong>De pagos:</strong> plan elegido, monto, medio de pago y comprobante que nos envías. No guardamos datos completos de tarjetas.</li>
+        <li><strong>De tu negocio:</strong> productos, precios, pedidos, clientes y demás información que registras en la plataforma.</li>
+        <li><strong>De uso:</strong> datos técnicos como navegador, dirección IP y páginas visitadas, para seguridad y mejora del servicio.</li>
+      </ul>
 
-          <h2>3. Compartir información</h2>
-          <p>
-            No vendemos, comercializamos ni alquilamos su información personal a terceros. Podemos compartir información 
-            genérica agregada demográfica no vinculada a ninguna información de identificación personal con nuestros 
-            socios comerciales y anunciantes de confianza para los fines descritos anteriormente.
-          </p>
+      <h2>3. Para qué usamos tus datos</h2>
+      <ul>
+        <li>Crear y mantener tu cuenta y prestarte el servicio.</li>
+        <li>Procesar y verificar tus pagos y suscripciones.</li>
+        <li>Darte soporte y enviarte avisos importantes sobre tu cuenta.</li>
+        <li>Enviarte novedades y promociones, solo si lo aceptas. Puedes darte de baja cuando quieras.</li>
+        <li>Prevenir fraudes y cumplir obligaciones legales y tributarias.</li>
+      </ul>
 
-          <h2>4. Seguridad de los datos</h2>
-          <p>
-            Implementamos medidas de seguridad diseñadas para proteger su información personal contra acceso no autorizado, 
-            alteración, divulgación o destrucción. Sin embargo, ningún método de transmisión por Internet o método de 
-            almacenamiento electrónico es 100% seguro.
-          </p>
+      <h2>4. Datos de los clientes de tu negocio</h2>
+      <p>
+        Cuando registras datos de tus propios clientes (por ejemplo, en pedidos o en el CRM), tu negocio es el
+        responsable de esos datos y WowSmart solo los trata por encargo tuyo, para prestarte el servicio.
+      </p>
 
-          <h2>5. Sus derechos</h2>
-          <p>
-            Usted tiene derecho a acceder, corregir o eliminar su información personal en cualquier momento. 
-            Puede hacerlo iniciando sesión en su cuenta o contactándonos directamente.
-          </p>
+      <h2>5. Con quién compartimos datos</h2>
+      <p>
+        No vendemos tus datos. Solo los compartimos con proveedores que necesitamos para operar (alojamiento, base de
+        datos y envío de correos), que pueden estar fuera del Perú y deben protegerlos, o cuando una autoridad lo exija por ley.
+      </p>
 
-          <h2>6. Contacto</h2>
-          <p>
-            Si tiene alguna pregunta sobre esta Política de Privacidad, puede contactarnos en:
-            <br />
-            <strong>Correo electrónico:</strong> ventas@wow-smart.com
-          </p>
-        </div>
-      </main>
+      <h2>6. Cuánto tiempo los guardamos</h2>
+      <p>
+        Mientras tu cuenta esté activa y, después, el tiempo necesario para cumplir obligaciones legales o atender reclamos.
+        Luego los eliminamos o anonimizamos.
+      </p>
 
-      <footer className="bg-[#0b0014] text-slate-300 py-8 text-center text-sm">
-        Copyright © 2026 ABSOLUT360 WOW SACS | RUC: 20613616978
-      </footer>
-    </div>
+      <h2>7. Tus derechos</h2>
+      <p>
+        Puedes pedir acceder, corregir, cancelar u oponerte al uso de tus datos (derechos ARCO) escribiendo a{' '}
+        <a href={`mailto:${COMPANY_LEGAL.email}`} className="text-indigo-600 font-semibold hover:underline">{COMPANY_LEGAL.email}</a>.
+        Te responderemos en los plazos de ley. Si no estás conforme, puedes acudir a la Autoridad Nacional de Protección de Datos Personales.
+      </p>
+
+      <h2>8. Seguridad</h2>
+      <p>Usamos conexiones cifradas (HTTPS), control de accesos y copias de seguridad para proteger tu información.</p>
+
+      <h2>9. Cookies</h2>
+      <p>
+        Usamos cookies necesarias para mantener tu sesión y, si las aceptas, cookies de medición. Más detalles en nuestra{' '}
+        <a href="/cookies" className="text-indigo-600 font-semibold hover:underline">Política de Cookies</a>.
+      </p>
+
+      <h2>10. Cambios</h2>
+      <p>Si actualizamos esta política, publicaremos la nueva versión aquí con su fecha.</p>
+    </LegalLayout>
   );
 }

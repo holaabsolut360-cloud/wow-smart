@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { WHATSAPP_ENABLED, whatsappLink } from '../config/site';
 import { motion, AnimatePresence } from 'motion/react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { CheckCircle2, ArrowRight, ArrowLeft, ShieldCheck, CreditCard, Upload, Mail } from 'lucide-react';
@@ -69,29 +70,16 @@ export default function Checkout() {
   });
   const [paymentMethod, setPaymentMethod] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [paymentSettings, setPaymentSettings] = useState({ companyName: "WowSmart SAC", accountNumber: "999 888 777" });
+  // Datos de pago públicos: el servidor solo los entrega si son reales
+  // (si siguen siendo los de ejemplo, responde configured:false y pedimos
+  // coordinar el pago por WhatsApp).
+  const [paymentSettings, setPaymentSettings] = useState<{ configured: boolean; companyName?: string; accountNumber?: string }>({ configured: false });
 
-  // Datos de pago (nombre/número para Yape/Plin) ahora se leen desde
-  // Supabase (tabla platform_settings) en vez de localStorage, para
-  // que lo que configure el SuperAdmin se vea igual en cualquier
-  // dispositivo/navegador del cliente.
   React.useEffect(() => {
-    const loadPaymentSettings = async () => {
-      try {
-        const { data, error } = await supabase
-          .from('platform_settings')
-          .select('value')
-          .eq('key', 'payment_settings')
-          .maybeSingle();
-
-        if (!error && data?.value) {
-          setPaymentSettings(data.value as { companyName: string; accountNumber: string });
-        }
-      } catch (e) {
-        // Si falla la carga, se mantienen los valores por defecto.
-      }
-    };
-    loadPaymentSettings();
+    fetch('/api/payment-settings')
+      .then(r => (r.ok ? r.json() : null))
+      .then(data => { if (data) setPaymentSettings(data); })
+      .catch(() => null);
   }, []);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -364,23 +352,27 @@ export default function Checkout() {
 
                   <div className="p-8">
                     <>
-                      <div className="text-center mb-8">
-                        <p className="text-slate-600 font-medium mb-4">Escanea el código QR de <strong>{paymentMethod}</strong> para realizar el pago.</p>
-                        <div className="w-48 h-48 bg-white border-2 border-slate-200 rounded-2xl mx-auto flex items-center justify-center p-2 shadow-sm">
-                          {/* Simulación de QR */}
-                          <div className="w-full h-full bg-slate-900 rounded-xl flex items-center justify-center relative overflow-hidden">
-                            <div className="absolute inset-0 grid grid-cols-4 grid-rows-4 gap-1 p-2">
-                               {Array.from({length: 16}).map((_, i) => (
-                                 <div key={i} className={`bg-white rounded-sm ${i % 2 === 0 ? 'opacity-90' : 'opacity-40'}`}></div>
-                               ))}
-                            </div>
-                            <div className="w-12 h-12 bg-white relative z-10 rounded shadow-md flex items-center justify-center font-black text-slate-900 text-xs">
-                              {paymentMethod}
-                            </div>
+                      {paymentSettings.configured ? (
+                        <div className="text-center mb-8">
+                          <p className="text-slate-600 font-medium mb-4">Realiza el pago por <strong>{paymentMethod}</strong> a estos datos:</p>
+                          <div className="inline-block rounded-2xl border-2 border-indigo-100 bg-indigo-50 px-6 py-4 text-left">
+                            <p className="text-sm text-slate-500">A nombre de</p>
+                            <p className="font-bold text-slate-900">{paymentSettings.companyName}</p>
+                            <p className="text-sm text-slate-500 mt-2">Número</p>
+                            <p className="font-black text-xl text-indigo-700 tracking-wide">{paymentSettings.accountNumber}</p>
                           </div>
                         </div>
-                        <p className="text-sm text-slate-500 mt-4">A nombre de: {paymentSettings.companyName}<br/>Número: {paymentSettings.accountNumber}</p>
-                      </div>
+                      ) : (
+                        <div className="text-center mb-8">
+                          <p className="text-lg font-bold text-slate-900 mb-2">Coordina tu pago por WhatsApp</p>
+                          <p className="text-slate-600 mb-5">Escríbenos y te enviamos los datos para pagar con <strong>{paymentMethod || 'Yape, Plin o transferencia'}</strong>. Luego sube aquí tu comprobante.</p>
+                          {WHATSAPP_ENABLED && (
+                            <a href={whatsappLink(`Hola, quiero pagar el plan ${selectedPlan?.name || ''} de WowSmart con ${paymentMethod || 'Yape/Plin'}`)} target="_blank" rel="noopener noreferrer" className="inline-block px-6 py-3 rounded-xl bg-[#25D366] hover:bg-[#1ebe5b] text-white font-bold shadow-sm">
+                              Coordinar por WhatsApp
+                            </a>
+                          )}
+                        </div>
+                      )}
 
                       <div className="border-t border-slate-100 pt-8">
                         <label className="block text-sm font-bold text-slate-700 mb-4 text-center">Sube tu comprobante de pago</label>
