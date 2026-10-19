@@ -11,6 +11,7 @@ import { resolveCatalogTaxRate, taxLabel } from "../utils/pricingCalculator";
 import { ImageUpload } from "../components/ImageUpload";
 import { track as gaTrack } from '../lib/analytics';
 import { normalizeWhatsapp } from "../config/templates";
+import { NearbyOffer } from "../components/loyalty/NearbyOffer";
 
 const track = (slug: string | undefined, type: string, productId?: string) => {
   if (!slug) return;
@@ -526,6 +527,7 @@ export default function Catalog() {
       </div>
 
       {/* Grid */}
+      {slug && <NearbyOffer slug={slug} auto />}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8 sm:py-10">
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-6">
           {filteredProducts.map((p, idx) => {

@@ -60,6 +60,7 @@ export interface Deps {
   track: (companyId: string, type: string) => Promise<void>;
   allowedPlans: () => string[];
   lastOrderFor: (companyId: string, phone: string) => Promise<any | null>;
+  onPointsChange?: (companyId: string, customer: any) => void; // v6: actualiza el pase de Google Wallet
 }
 
 const clean = (s: any, n = 80) => String(s ?? '').replace(/[<>]/g, '').trim().slice(0, n);
@@ -86,7 +87,9 @@ export function createLoyalty(deps: Deps) {
     const points = Math.max(0, (cust.points || 0) + delta);
     const lifetime = (cust.lifetime_points || 0) + Math.max(0, delta);
     await S().upd('loyalty_customers', cust.id, { points, lifetime_points: lifetime });
-    return { ...cust, points, lifetime_points: lifetime };
+    const next = { ...cust, points, lifetime_points: lifetime };
+    try { deps.onPointsChange?.(companyId, next); } catch {}
+    return next;
   };
 
   const issueCoupon = async (companyId: string, customerId: string | null, auto: string, kind: string, value: number, validDays: number, prefix: string) =>
@@ -202,6 +205,16 @@ export function createLoyalty(deps: Deps) {
         }
       }
     } catch { /* tablas aún no creadas */ }
+  };
+
+  // v6: valida teléfono + código del último pedido (misma regla que "Mi tarjeta")
+  const verifyCustomer = async (c: CompanyInfo, phone: string, code: string) => {
+    const st = await settingsOf(c.id);
+    if (!st.enabled || !access(c)) return null;
+    const cust = await findCustomer(c.id, phone);
+    const lastOrder = cust ? await deps.lastOrderFor(c.id, phone) : null;
+    if (!cust || !lastOrder || String(lastOrder.order_code || '').toUpperCase() !== code) return null;
+    return { cust, st, tier: tierInfo(cust.lifetime_points || 0, st.tiers).tier };
   };
 
   // Vista pública de la tarjeta del cliente (requiere teléfono + código del último pedido)
@@ -357,6 +370,6 @@ export function createLoyalty(deps: Deps) {
     }));
   };
 
-  return { register, onPublicOrder, onOrderStatus, runAutoCoupons, settingsOf, access };
+  return { register, onPublicOrder, onOrderStatus, runAutoCoupons, settingsOf, access, verifyCustomer, findCustomer };
 }
 export { DEFAULT_PLANS };

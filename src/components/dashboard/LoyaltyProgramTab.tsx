@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Award, Gift, Ticket, Trophy, Users, Lock, Plus, Trash2, ExternalLink, Save, Cake, HeartHandshake } from 'lucide-react';
 import { apiClient } from '../../services/api';
 import { track as gaTrack } from '../../lib/analytics';
+import { GeoOffersTab } from '../loyalty/GeoOffersTab';
 
 // v5 — Fidelización tipo "Open Loyalty" para negocios pequeños.
 type Tier = { name: string; min: number; benefitPct: number };
@@ -16,7 +17,7 @@ export function LoyaltyProgramTab({ slug }: { slug?: string }) {
   const [err, setErr] = useState('');
   const [st, setSt] = useState<any>(null);
   const [saving, setSaving] = useState(false);
-  const [sub, setSub] = useState<'clientes' | 'premios' | 'cupones' | 'retos' | 'ajustes'>(() => (['premios', 'cupones', 'retos', 'ajustes'].includes(new URLSearchParams(window.location.search).get('sub') || '') ? new URLSearchParams(window.location.search).get('sub') as any : 'clientes'));
+  const [sub, setSub] = useState<'clientes' | 'premios' | 'cupones' | 'retos' | 'ajustes' | 'cerca'>(() => (['premios', 'cupones', 'retos', 'ajustes', 'cerca'].includes(new URLSearchParams(window.location.search).get('sub') || '') ? new URLSearchParams(window.location.search).get('sub') as any : 'clientes'));
   const load = () => apiClient.get('/api/fidelizacion').then(r => { setD(r); setSt(r.settings); }).catch(e => setErr(e.message || 'No se pudo cargar'));
   useEffect(() => { load(); }, []);
   if (err) return <div className="p-6 rounded-2xl bg-amber-50 text-amber-800 border border-amber-200">{err.replace(/^API error \d+: /, '')}</div>;
@@ -75,7 +76,7 @@ export function LoyaltyProgramTab({ slug }: { slug?: string }) {
       )}
 
       <div className="flex gap-2 overflow-x-auto" role="tablist">
-        {[['clientes', 'Clientes'], ['premios', 'Premios'], ['cupones', 'Cupones'], ['retos', 'Retos'], ['ajustes', 'Puntos y niveles']].map(([k, l]) => (
+        {[['clientes', 'Clientes'], ['premios', 'Premios'], ['cupones', 'Cupones'], ['retos', 'Retos'], ['ajustes', 'Puntos y niveles'], ['cerca', 'Tiendas y ofertas cerca']].map(([k, l]) => (
           <button key={k} role="tab" aria-selected={sub === k} onClick={() => setSub(k as any)} className={`px-4 py-2 rounded-full text-sm font-bold whitespace-nowrap ${sub === k ? 'bg-indigo-600 text-white' : 'bg-white border border-slate-200 text-slate-700'}`}>{l}</button>
         ))}
       </div>
@@ -114,6 +115,7 @@ export function LoyaltyProgramTab({ slug }: { slug?: string }) {
       {sub === 'premios' && <Crud kind="premios" items={d.rewards} reload={load} />}
       {sub === 'cupones' && <Crud kind="cupones" items={d.coupons} reload={load} />}
       {sub === 'retos' && <Crud kind="retos" items={d.challenges} reload={load} />}
+      {sub === 'cerca' && <GeoOffersTab />}
     </div>
   );
 }

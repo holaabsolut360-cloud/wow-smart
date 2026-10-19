@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Award, Gift, Ticket, Trophy, ArrowLeft } from 'lucide-react';
 import { track as gaTrack } from '../lib/analytics';
+import { NearbyOffer, PushOptIn } from '../components/loyalty/NearbyOffer';
 
 // v5 — "Mi tarjeta": el cliente ve sus puntos con su WhatsApp + el código de su último pedido.
 export default function MisPuntos() {
@@ -11,6 +12,17 @@ export default function MisPuntos() {
   const [d, setD] = useState<any>(null);
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
+  const [extras, setExtras] = useState<any>({});
+  const [walletBusy, setWalletBusy] = useState(false);
+  useEffect(() => { fetch(`/api/catalog/${encodeURIComponent(slug)}/extras`).then(r => r.json()).then(setExtras).catch(() => {}); }, [slug]);
+  const addToWallet = async () => {
+    setWalletBusy(true);
+    try {
+      const r = await fetch(`/api/catalog/${encodeURIComponent(slug)}/wallet`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone, code }) });
+      const j = await r.json(); if (!r.ok) throw new Error(j.error);
+      gaTrack('wallet_save_click', { catalog: slug }); window.location.href = j.url;
+    } catch (e: any) { setErr(e.message || 'No se pudo generar la tarjeta'); } finally { setWalletBusy(false); }
+  };
   useEffect(() => {
     document.title = 'Mis puntos — WowSmart';
     const q = new URLSearchParams(window.location.search);
@@ -60,6 +72,12 @@ export default function MisPuntos() {
               <div className="text-xs mt-3 opacity-80">Ganas {d.pointsPerSol} punto{d.pointsPerSol === 1 ? '' : 's'} por cada S/ 1</div>
             </section>
 
+            {extras.wallet && <button onClick={addToWallet} disabled={walletBusy} data-testid="gwallet-btn" aria-label="Agregar a Google Wallet"
+              className="w-full flex items-center justify-center gap-3 py-3 rounded-full bg-black text-white font-bold disabled:opacity-60">
+              <svg viewBox="0 0 24 24" className="w-6 h-6" aria-hidden="true"><path fill="#4285F4" d="M3 7h18v4H3z"/><path fill="#34A853" d="M3 11h18v4H3z"/><path fill="#FBBC04" d="M3 15h18v3H3z"/><path fill="#EA4335" d="M3 5h18v2H3z"/></svg>
+              {walletBusy ? 'Generando…' : 'Agregar a Google Wallet'}</button>}
+            {err && <p role="alert" className="text-sm text-rose-600">{err}</p>}
+
             <section className="bg-white rounded-3xl border border-slate-200 p-5">
               <h2 className="font-bold text-slate-900 flex items-center gap-2 mb-3"><Gift className="w-5 h-5 text-indigo-600" aria-hidden="true" /> Premios</h2>
               {!d.rewards.length ? <p className="text-sm text-slate-500">Pronto habrá premios.</p> : <ul className="space-y-2">{d.rewards.map((r: any) => (
@@ -89,6 +107,8 @@ export default function MisPuntos() {
                   <div className="text-xs text-slate-500 mt-1">Premio: {c.rewardPoints} puntos</div>
                 </li>))}</ul>
             </section>}
+            {extras.hasStores && <NearbyOffer slug={slug} />}
+            {extras.push && extras.vapidPublicKey && <section className="bg-white rounded-3xl border border-slate-200 p-5 space-y-2"><h2 className="font-bold text-slate-900">Avisos de ofertas</h2><p className="text-sm text-slate-600">Recibe en tu celular las ofertas que la tienda publique.</p><PushOptIn slug={slug} vapidKey={extras.vapidPublicKey} phone={phone} code={code} /></section>}
             <button onClick={() => setD(null)} className="w-full text-sm text-slate-600 underline">Salir</button>
           </>
         )}

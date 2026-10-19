@@ -12,6 +12,9 @@ import helmet from "helmet";
 import { RUBRO_TEMPLATES, normalizeWhatsapp, isValidWhatsapp } from "./src/config/templates";
 import { DEMO_CATALOG_SLUG } from "./src/config/site";
 import { createLoyalty, memoryStore, supabaseStore, DEFAULT_PLANS } from "./server/loyalty";
+import { createWallet } from "./server/wallet";
+import { createGeo } from "./server/geo";
+import { tierInfo, sanitizeTiers } from "./server/loyaltyCore";
 
 const isProduction = process.env.NODE_ENV === "production";
 const requiredServerEnv = ["SUPABASE_URL", "SUPABASE_ANON_KEY"];
@@ -2501,12 +2504,14 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
   const loyaltyMock = !isProduction && process.env.LOYALTY_MOCK === '1';
   const memStore = memoryStore();
   const loyaltyAllowedPlans = () => (process.env.LOYALTY_PLANS || DEFAULT_PLANS.join(',')).split(',').map(x => x.trim()).filter(Boolean);
-  const memCompany = (c: any) => c && ({ id: String(c.id), name: c.name, slug: c.slug, plan: loyaltyMock ? (process.env.LOYALTY_MOCK_PLAN || 'Negocio Pequeño') : c.plan, status: c.subscriptionStatus || 'Activa' });
-  const sbCompany = (c: any) => c && ({ id: c.id, name: c.name, slug: c.slug, plan: c.plan, status: computeSubscriptionStatus(c.subscription_status, c.subscription_ends_at) });
-  const loyaltyCompanyCols = 'id,name,slug,plan,subscription_status,subscription_ends_at';
+  const memCompany = (c: any) => c && ({ id: String(c.id), name: c.name, slug: c.slug, plan: loyaltyMock ? (process.env.LOYALTY_MOCK_PLAN || 'Negocio Pequeño') : c.plan, status: c.subscriptionStatus || 'Activa', logo: c.logo, color: c.color });
+  const sbCompany = (c: any) => c && ({ id: c.id, name: c.name, slug: c.slug, plan: c.plan, status: computeSubscriptionStatus(c.subscription_status, c.subscription_ends_at), logo: c.logo, color: c.color });
+  const loyaltyCompanyCols = 'id,name,slug,plan,subscription_status,subscription_ends_at,logo,color';
   const toSnakeOrder = (o: any) => o && ({ id: String(o.id), company_id: String(o.companyId), total: o.total, subtotal: o.subtotal, discount: o.discount, status: o.status,
     order_code: o.order_code, loyalty_phone: o.loyalty_phone, loyalty_status: o.loyalty_status, reward_id: o.reward_id, reward_points: o.reward_points, created_at: o.createdAt });
+  let geoPointsHook: ((cid: string, cu: any) => void) | null = null;
   const loyalty = createLoyalty({
+    onPointsChange: (cid, cu) => geoPointsHook?.(cid, cu),
     store: () => (useSupabaseDb ? (supabaseAdmin ? supabaseStore(supabaseAdmin) : null) : memStore),
     allowedPlans: loyaltyAllowedPlans,
     getOwner: async (req) => {
@@ -2544,6 +2549,37 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     },
   });
   loyalty.register(app, rateLimit);
+
+  // v6: Google Wallet + tiendas físicas + "Oferta cerca de tienda" + Web Push. Ver server/geo.ts
+  const walletMock = !isProduction && process.env.WALLET_MOCK === '1';
+  const wallet = createWallet({ issuerId: process.env.GOOGLE_WALLET_ISSUER_ID, saJsonB64: process.env.GOOGLE_WALLET_SA_JSON,
+    baseUrl: (process.env.PUBLIC_BASE_URL || 'https://wow-smart.com').replace(/\/$/, ''), mock: walletMock });
+  const geo = createGeo({
+    store: () => (useSupabaseDb ? (supabaseAdmin ? supabaseStore(supabaseAdmin) : null) : memStore),
+    wallet,
+    getOwner: async (req) => { if (!useSupabaseDb) return loyaltyMock ? memCompany(db.companies[0]) : null; const { row } = await getOwnedCompanyRow(req); return sbCompany(row); },
+    companyBySlug: async (slug) => {
+      if (!useSupabaseDb) return memCompany(db.companies.find((c: any) => c.slug === slug));
+      if (!supabaseAdmin) return null;
+      const { data } = await supabaseAdmin.from('companies').select(loyaltyCompanyCols).eq('slug', slug).maybeSingle(); return sbCompany(data);
+    },
+    companyById: async (id) => {
+      if (!useSupabaseDb) return memCompany(db.companies.find((c: any) => String(c.id) === String(id)));
+      if (!supabaseAdmin) return null;
+      const { data } = await supabaseAdmin.from('companies').select(loyaltyCompanyCols).eq('id', id).maybeSingle(); return sbCompany(data);
+    },
+    loyalty,
+    tierName: async (cid, lifetime) => tierInfo(lifetime, sanitizeTiers((await loyalty.settingsOf(cid)).tiers)).tier.name,
+    track: async (companyId, type) => {
+      if (!useSupabaseDb) { (memStore.data.catalog_events ||= []).push({ company_id: companyId, type, created_at: new Date().toISOString() }); return; }
+      try { await supabaseAdmin?.from('catalog_events').insert({ company_id: companyId, type }); } catch {}
+    },
+    vapid: { publicKey: process.env.VAPID_PUBLIC_KEY, privateKey: process.env.VAPID_PRIVATE_KEY, subject: process.env.VAPID_SUBJECT },
+    pushMock: !isProduction && process.env.PUSH_MOCK === '1',
+  });
+  geoPointsHook = geo.onPointsChange;
+  geo.register(app, rateLimit);
+  if (walletMock) app.get('/api/dev/wallet-calls', (_req, res) => res.json({ calls: wallet.calls, push: geo.pushSent }));
   if (process.env.NODE_ENV === 'production' && process.env.DISABLE_LOYALTY_JOB !== 'true') {
     setTimeout(loyalty.runAutoCoupons, 90 * 1000);
     setInterval(loyalty.runAutoCoupons, 6 * 60 * 60 * 1000).unref?.();
