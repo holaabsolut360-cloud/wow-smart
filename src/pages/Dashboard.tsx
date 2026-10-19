@@ -20,6 +20,7 @@ import { ProductsTab } from "../components/dashboard/ProductsTab";
 import { OrdersTab } from "../components/dashboard/OrdersTab";
 import { CustomersTab } from "../components/dashboard/CustomersTab";
 import { GrowthPanel } from "../components/dashboard/GrowthPanel";
+import { LoyaltyProgramTab } from "../components/dashboard/LoyaltyProgramTab";
 import { Home } from "lucide-react";
 import { ImageUpload } from "../components/ImageUpload";
 import { QRCodeSVG } from "qrcode.react";
@@ -49,7 +50,7 @@ export default function Dashboard() {
     if (currentUserRole === "Administrador") return true;
     if (currentUserRole === "Cajero") return ["pos", "orders"].includes(tab);
     if (currentUserRole === "Vendedor") return ["pos", "orders", "customers", "crm"].includes(tab);
-    if (currentUserRole === "Supervisor") return ["pos", "orders", "customers", "crm", "debts", "expenses", "products", "inventory", "categories", "coupons", "recipes", "analytics", "suppliers"].includes(tab);
+    if (currentUserRole === "Supervisor") return ["pos", "orders", "customers", "crm", "debts", "expenses", "products", "inventory", "categories", "coupons", "loyalty", "recipes", "analytics", "suppliers"].includes(tab);
     return false;
   };
 
@@ -62,7 +63,7 @@ export default function Dashboard() {
   const products: any[] = [];
   const orders: any[] = [];
   const customers: any[] = [];
-  const [activeTab, setActiveTab] = useState<'home' | 'products' | 'orders' | 'categories' | 'coupons' | 'analytics' | 'customers' | 'expenses' | 'settings' | 'pos' | 'security' | 'recipes' | 'debts' | 'inventory' | 'crm' | 'suppliers'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'products' | 'orders' | 'categories' | 'coupons' | 'analytics' | 'customers' | 'expenses' | 'settings' | 'pos' | 'security' | 'recipes' | 'debts' | 'inventory' | 'crm' | 'suppliers' | 'loyalty'>(() => (new URLSearchParams(window.location.search).get('tab') === 'fidelizacion' ? 'loyalty' : 'home'));
 
   const isServiceBusiness = company?.businessType === 'Estudio de Abogados' || company?.businessType === 'Servicios Profesionales' || company?.businessType === 'Agencia de Publicidad' || company?.businessType === 'Imprenta';
   const isGastronomic = company?.businessType === 'Restaurante';
@@ -247,6 +248,14 @@ export default function Dashboard() {
             Cupones
           </button>}
           
+          {hasAccess("loyalty") && <button 
+            onClick={() => setActiveTab("loyalty")} 
+            className={`flex items-center gap-2 md:gap-3 px-4 py-2 md:py-3 rounded-xl font-bold transition-colors whitespace-nowrap md:w-full ${activeTab === 'loyalty' ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-slate-50 text-slate-600 font-medium'}`}
+          >
+            <span className="text-lg">🏆</span>
+            Fidelización
+          </button>}
+          
           {hasAccess("suppliers") && <button 
             onClick={() => setActiveTab("suppliers")} 
             className={`flex items-center gap-2 md:gap-3 px-4 py-2 md:py-3 rounded-xl font-bold transition-colors whitespace-nowrap md:w-full ${activeTab === 'suppliers' ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-slate-50 text-slate-600 font-medium'}`}
@@ -389,6 +398,8 @@ export default function Dashboard() {
           <CategoriesTab company={company} setCompany={setCompany as any} />
         ) : activeTab === 'coupons' ? (
           <CouponsTab company={company} setCompany={setCompany as any} />
+        ) : activeTab === 'loyalty' ? (
+          <LoyaltyProgramTab slug={company?.slug} />
         ) : activeTab === 'suppliers' ? (
           <SuppliersTab company={company} />
         ) : activeTab === 'security' ? (

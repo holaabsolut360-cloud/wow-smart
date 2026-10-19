@@ -48,6 +48,16 @@ export function PlatformMetrics() {
         <Card label="Ingresos aprobados del periodo" value={money(m.ingresosAprobados)} />
         <Card label="Pagos por revisar" value={m.pagosPendientes} />
       </div>
+      <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm" data-testid="sa-loyalty">
+        <h2 className="font-bold text-slate-900 mb-1">🏆 Fidelización (adopción)</h2>
+        {!m.fidelizacion?.disponible ? <p className="text-sm text-slate-500">Aún no disponible: falta ejecutar v5.sql en Supabase.</p> : (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-2">
+            <Card label="Empresas con programa activo" value={m.fidelizacion.empresasActivas} hint={`${m.fidelizacion.adopcion}% de las empresas`} />
+            <Card label="Clientes en programas" value={m.fidelizacion.miembros} hint={`${m.fidelizacion.uniones} se unieron en el periodo`} />
+            <Card label="Compras con puntos" value={m.fidelizacion.puntosOtorgados} hint={`${m.fidelizacion.canjes} canjes de premios`} />
+            <Card label="Cupones usados" value={m.fidelizacion.cupones} hint={`${m.fidelizacion.retos} retos completados`} />
+          </div>)}
+      </div>
       <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
         <h2 className="font-bold text-slate-900 mb-3">Actividad diaria</h2>
         <div style={{ width: '100%', height: 280 }}>

@@ -1,3 +1,4 @@
+import { track as gaTrack } from '../../lib/analytics';
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Company } from '../../types';
@@ -101,7 +102,12 @@ export function OrdersTab({ company }: OrdersTabProps) {
                         value={order.status}
                         onChange={async (e) => {
                           const newStatus = e.target.value;
-                          await apiClient.put(`/api/orders/${order.id}/status`, { status: newStatus });
+                          const r: any = await apiClient.put(`/api/orders/${order.id}/status`, { status: newStatus });
+                          if (r?.loyaltyResult?.points) {
+                            gaTrack('points_earned', { points: r.loyaltyResult.points });
+                            (r.loyaltyResult.challenges || []).forEach((c: string) => gaTrack('challenge_completed', { challenge: c }));
+                            alert(`Fidelización: ${order.customerName} ganó ${r.loyaltyResult.points} puntos${r.loyaltyResult.challenges?.length ? ` y completó el reto: ${r.loyaltyResult.challenges.join(', ')}` : ''}.`);
+                          }
                           queryClient.invalidateQueries({ queryKey: ['orders'] });
                         }}
                         className={`mt-2 text-xs font-bold px-3 py-1.5 rounded-full border outline-none cursor-pointer ${
@@ -140,7 +146,7 @@ export function OrdersTab({ company }: OrdersTabProps) {
                       <div className="mt-4 pt-4 border-t border-slate-100 flex justify-end">
                         <button 
                           onClick={() => {
-                            const msg = `Hola ${order.customerName}, tu pedido #${order.id.slice(-6)} ya está ${order.status.toLowerCase()}.`;
+                            const msg = `Hola ${order.customerName}, tu pedido #${order.orderCode || order.id.slice(-6)} ya está ${order.status.toLowerCase()}.`;
                             window.open(`https://wa.me/${order.customerPhone.replace(/\+/g, '')}?text=${encodeURIComponent(msg)}`, '_blank');
                           }}
                           className="px-4 py-2 bg-[#25D366] text-white hover:bg-[#1ebd5a] font-bold text-sm rounded-lg transition-colors flex items-center gap-2"

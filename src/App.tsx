@@ -20,6 +20,7 @@ const CookiesPolicy = lazy(() => import("./pages/CookiesPolicy"));
 const ComplaintsBook = lazy(() => import("./pages/ComplaintsBook"));
 const Terms = lazy(() => import("./pages/Terms"));
 const NotFound = lazy(() => import("./pages/NotFound"));
+const MisPuntos = lazy(() => import("./pages/MisPuntos"));
 initAnalytics();
 const PageViews = () => {
   const loc = useLocation();
@@ -49,6 +50,7 @@ export default function App() {
         <Route path="/reclamaciones" element={<ComplaintsBook />} />
         <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
         <Route path="/c/:slug" element={<Catalog />} />
+        <Route path="/c/:slug/mis-puntos" element={<MisPuntos />} />
         <Route path="/superadmin" element={<ProtectedRoute><SuperAdmin /></ProtectedRoute>} />
         <Route path="*" element={<NotFound />} />
       </Routes>

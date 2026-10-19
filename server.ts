@@ -11,6 +11,7 @@ import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import { RUBRO_TEMPLATES, normalizeWhatsapp, isValidWhatsapp } from "./src/config/templates";
 import { DEMO_CATALOG_SLUG } from "./src/config/site";
+import { createLoyalty, memoryStore, supabaseStore, DEFAULT_PLANS } from "./server/loyalty";
 
 const isProduction = process.env.NODE_ENV === "production";
 const requiredServerEnv = ["SUPABASE_URL", "SUPABASE_ANON_KEY"];
@@ -868,6 +869,9 @@ const fromBatch = (batch: any) => ({
 
 const toOrder = (row: any) => row && ({
   id: row.id,
+  orderCode: row.order_code || undefined,
+  loyaltyStatus: row.loyalty_status || undefined,
+  rewardPoints: row.reward_points || undefined,
   companyId: row.company_id,
   customerName: row.customer_name,
   customerPhone: row.customer_phone,
@@ -935,6 +939,7 @@ const authMiddleware = async (req: express.Request, res: express.Response, next:
       return res.status(503).json({ error: "Authentication is not configured" });
     }
     console.warn("Supabase credentials not found. Skipping auth for development.");
+    if (process.env.LOYALTY_MOCK === '1' && req.headers.authorization) (req as any).user = { id: '1', email: 'demo@wowsmart.pe' };
     return next();
   }
 
@@ -2490,6 +2495,78 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     setInterval(runLoyaltyJob, 6 * 60 * 60 * 1000).unref?.();
   }
 
+  // ==========================================================================
+  // v5: Fidelización (puntos, niveles, premios, cupones, retos). Ver server/loyalty.ts
+  // ==========================================================================
+  const loyaltyMock = !isProduction && process.env.LOYALTY_MOCK === '1';
+  const memStore = memoryStore();
+  const loyaltyAllowedPlans = () => (process.env.LOYALTY_PLANS || DEFAULT_PLANS.join(',')).split(',').map(x => x.trim()).filter(Boolean);
+  const memCompany = (c: any) => c && ({ id: String(c.id), name: c.name, slug: c.slug, plan: loyaltyMock ? (process.env.LOYALTY_MOCK_PLAN || 'Negocio Pequeño') : c.plan, status: c.subscriptionStatus || 'Activa' });
+  const sbCompany = (c: any) => c && ({ id: c.id, name: c.name, slug: c.slug, plan: c.plan, status: computeSubscriptionStatus(c.subscription_status, c.subscription_ends_at) });
+  const loyaltyCompanyCols = 'id,name,slug,plan,subscription_status,subscription_ends_at';
+  const toSnakeOrder = (o: any) => o && ({ id: String(o.id), company_id: String(o.companyId), total: o.total, subtotal: o.subtotal, discount: o.discount, status: o.status,
+    order_code: o.order_code, loyalty_phone: o.loyalty_phone, loyalty_status: o.loyalty_status, reward_id: o.reward_id, reward_points: o.reward_points, created_at: o.createdAt });
+  const loyalty = createLoyalty({
+    store: () => (useSupabaseDb ? (supabaseAdmin ? supabaseStore(supabaseAdmin) : null) : memStore),
+    allowedPlans: loyaltyAllowedPlans,
+    getOwner: async (req) => {
+      if (!useSupabaseDb) return loyaltyMock ? memCompany(db.companies[0]) : null;
+      const { row } = await getOwnedCompanyRow(req); return sbCompany(row);
+    },
+    companyBySlug: async (slug) => {
+      if (!useSupabaseDb) return memCompany(db.companies.find((c: any) => c.slug === slug));
+      if (!supabaseAdmin) return null;
+      const { data } = await supabaseAdmin.from('companies').select(loyaltyCompanyCols).eq('slug', slug).maybeSingle(); return sbCompany(data);
+    },
+    companyById: async (id) => {
+      if (!useSupabaseDb) return memCompany(db.companies.find((c: any) => String(c.id) === String(id)));
+      if (!supabaseAdmin || !/^[0-9a-f-]{36}$/i.test(id)) return null;
+      const { data } = await supabaseAdmin.from('companies').select(loyaltyCompanyCols).eq('id', id).maybeSingle(); return sbCompany(data);
+    },
+    getOrder: async (id) => {
+      if (!useSupabaseDb) return toSnakeOrder(db.orders.find((o: any) => String(o.id) === String(id)));
+      if (!supabaseAdmin) return null;
+      const { data } = await supabaseAdmin.from('orders').select('*').eq('id', id).maybeSingle(); return data;
+    },
+    setOrder: async (id, patch) => {
+      if (!useSupabaseDb) { const o: any = db.orders.find((x: any) => String(x.id) === String(id)); if (o) Object.assign(o, patch); return; }
+      await supabaseAdmin?.from('orders').update(patch).eq('id', id);
+    },
+    lastOrderFor: async (companyId, phone) => {
+      if (!useSupabaseDb) return toSnakeOrder(db.orders.find((o: any) => String(o.companyId) === companyId && o.loyalty_phone === phone));
+      if (!supabaseAdmin) return null;
+      const { data } = await supabaseAdmin.from('orders').select('order_code,created_at').eq('company_id', companyId).eq('loyalty_phone', phone)
+        .order('created_at', { ascending: false }).limit(1).maybeSingle(); return data;
+    },
+    track: async (companyId, type) => {
+      if (!useSupabaseDb) { (memStore.data.catalog_events ||= []).push({ company_id: companyId, type, created_at: new Date().toISOString() }); return; }
+      try { await supabaseAdmin?.from('catalog_events').insert({ company_id: companyId, type }); } catch {}
+    },
+  });
+  loyalty.register(app, rateLimit);
+  if (process.env.NODE_ENV === 'production' && process.env.DISABLE_LOYALTY_JOB !== 'true') {
+    setTimeout(loyalty.runAutoCoupons, 90 * 1000);
+    setInterval(loyalty.runAutoCoupons, 6 * 60 * 60 * 1000).unref?.();
+  }
+  if (loyaltyMock) {
+    // Datos simulados SOLO para pruebas locales (nunca en producción ni en Supabase).
+    (async () => {
+      const cid = String(db.companies[0].id);
+      const s = memStore;
+      await s.ins('loyalty_settings', { company_id: cid, enabled: true, points_per_sol: 1, tiers: [{ name: 'Bronce', min: 0, benefitPct: 0 }, { name: 'Plata', min: 300, benefitPct: 5 }, { name: 'Oro', min: 1000, benefitPct: 10 }],
+        birthday_coupon: { enabled: true, discountType: 'percentage', value: 15, validDays: 15 }, winback: { enabled: true, days: 30, discountType: 'percentage', value: 10, validDays: 10 } });
+      const names = [['987654321', 'María Quispe', 1240, 1460, 14], ['912345678', 'José Huamán', 420, 610, 6], ['955111222', 'Rosa Mamani', 180, 180, 2], ['944333555', 'Luis Torres', 40, 90, 1]];
+      for (const [phone, name, points, lifetime, n] of names) await s.ins('loyalty_customers', { company_id: cid, phone, name, points, lifetime_points: lifetime, orders_count: n, last_purchase_at: new Date(Date.now() - (n as number) * 3 * 86400000).toISOString(), birthday: null });
+      for (const [name, cost, type, value] of [['10% de descuento', 200, 'discount', 10], ['Lapicero premium gratis', 350, 'product', 0], ['S/ 30 de descuento', 800, 'discount', 30]]) await s.ins('loyalty_rewards', { company_id: cid, name, points_cost: cost, type, value, active: true });
+      await s.ins('loyalty_coupons', { company_id: cid, code: 'BIENVENIDO10', discount_type: 'percentage', value: 10, expires_at: '2026-12-31', usage_limit: 100, used_count: 7, auto: null, customer_id: null, active: true });
+      await s.ins('loyalty_challenges', { company_id: cid, name: '3 compras en el mes', kind: 'orders_month', target: 3, reward_points: 100, active: true });
+      await s.ins('loyalty_challenges', { company_id: cid, name: 'Racha de 4 semanas', kind: 'streak_weeks', target: 4, reward_points: 150, reward_coupon_value: 15, reward_coupon_type: 'percentage', active: true });
+      const m = s.data.loyalty_customers[0];
+      for (let i = 0; i < 2; i++) await s.ins('loyalty_transactions', { company_id: cid, customer_id: m.id, delta: 120, reason: 'compra', order_id: `mock-${i}` });
+      db.orders.unshift({ id: 'mock-order-1', companyId: cid, customerName: 'María Quispe', customerPhone: '987654321', total: 118, subtotal: 100, discount: 0, status: 'Entregado', createdAt: new Date().toISOString(), order_code: 'WS7K2Q', loyalty_phone: '987654321', loyalty_status: 'otorgado' } as any);
+    })();
+  }
+
   // Panel del dueño: fidelización (código de referido, resumen, inactividad, clientes frecuentes).
   app.get('/api/loyalty/me', async (req, res) => {
     const { user, client, row } = await getOwnedCompanyRow(req);
@@ -2612,7 +2689,22 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     events.forEach((e: any) => { const r = rank[e.company_id]; if (!r) return; if (e.type === 'visit') r.visitas++; if (e.type === 'whatsapp_click') r.whatsapp++; });
     orders.forEach((o: any) => { const r = rank[o.company_id]; if (r) r.pedidos++; });
     const pct = (a: number, b: number) => b ? Math.round((a / b) * 1000) / 10 : 0;
+    // v5: adopción de fidelización
+    let fidelizacion: any = { disponible: false };
+    try {
+      const [ls, lc] = await Promise.all([
+        w.from('loyalty_settings').select('company_id,enabled'),
+        w.from('loyalty_customers').select('company_id', { count: 'exact', head: true }),
+      ]);
+      if (!ls.error) {
+        const enabledIds = new Set((ls.data || []).filter((x: any) => x.enabled).map((x: any) => x.company_id));
+        const lt = (t: string) => events.filter((e: any) => e.type === t).length;
+        fidelizacion = { disponible: true, empresasActivas: enabledIds.size, adopcion: pct(enabledIds.size, companies.length), miembros: lc.count || 0,
+          uniones: lt('loyalty_join'), puntosOtorgados: lt('points_earned'), canjes: lt('reward_redeemed'), cupones: lt('coupon_applied'), retos: lt('challenge_completed') };
+      }
+    } catch {}
     res.json({
+      fidelizacion,
       dias: days,
       totalEmpresas: companies.length,
       registros: signups,
@@ -3421,17 +3513,26 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
       // Inserción sin .select(): el visitante anónimo no tiene permiso de lectura.
       const orderRow: any = stripUndefined(fromOrder(body));
       if (body.frequentOptIn) orderRow.frequent_opt_in = true;
+      const loy = isPublicOrder ? await loyalty.onPublicOrder(body) : { columns: {}, info: null };
+      orderRow.id = crypto.randomUUID();
+      Object.assign(orderRow, loy.columns);
       let { error } = await client.from("orders").insert(orderRow);
+      if (error && /order_code|loyalty_|reward_/i.test(error.message || '')) {
+        // La base aún no tiene las columnas de v5.sql: se guarda sin fidelización.
+        for (const k of Object.keys(loy.columns)) delete orderRow[k];
+        loy.info = null; (loy.columns as any) = {};
+        ({ error } = await client.from("orders").insert(orderRow));
+      }
       if (error && /frequent_opt_in/i.test(error.message || '')) {
         delete orderRow.frequent_opt_in;
         ({ error } = await client.from("orders").insert(orderRow));
       }
       if (error && body.status === 'Nuevo' && /check|status/i.test(error.message || '')) {
         // La base aún no tiene el estado "Nuevo" (falta v3.sql): se guarda como Pendiente.
-        ({ error } = await client.from("orders").insert(stripUndefined(fromOrder({ ...body, status: 'Pendiente' }))));
+        ({ error } = await client.from("orders").insert({ ...orderRow, status: 'Pendiente' }));
       }
       if (error) return res.status(500).json({ error: error.message });
-      return res.json({ ok: true, status: body.status || 'Pendiente' });
+      return res.json({ ok: true, status: body.status || 'Pendiente', orderCode: (loy.columns as any).order_code || null, loyalty: loy.info });
     }
 
     const newOrder = {
@@ -3462,8 +3563,10 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
       });
     }
 
+    const loyMem = isPublicOrder ? await loyalty.onPublicOrder(body) : { columns: {}, info: null };
+    Object.assign(newOrder, loyMem.columns);
     db.orders.unshift(newOrder); // Add to beginning
-    res.json(newOrder);
+    res.json({ ...newOrder, orderCode: (loyMem.columns as any).order_code || null, loyalty: loyMem.info });
   });
 
   app.put("/api/orders/:id/status", async (req, res) => {
@@ -3479,12 +3582,14 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
         .single();
 
       if (error) return res.status(500).json({ error: error.message });
-      return res.json(toOrder(data));
+      const loyaltyResult = await loyalty.onOrderStatus(String((req.params as any).id), String(req.body.status));
+      return res.json({ ...toOrder(data), loyaltyResult });
     }
 
     const idx = db.orders.findIndex(o => o.id === (req.params as any).id);
     if (idx !== -1) {
       db.orders[idx].status = req.body.status;
+      (db.orders[idx] as any).loyaltyResult = await loyalty.onOrderStatus(String(db.orders[idx].id), String(req.body.status));
       addAuditLog(db.orders[idx].companyId, "ACTUALIZAR", "Pedidos", `Estado del pedido #${db.orders[idx].id} actualizado a ${req.body.status}`);
       res.json(db.orders[idx]);
     } else {
@@ -4174,7 +4279,7 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
           return res.status(404).type('html').send(indexHtml);
         } catch { /* cae al index normal */ }
       }
-      const known = /^\/(|auth|checkout(\/[^/]+)?|privacidad|terminos|legal|cookies|reclamaciones|dashboard|superadmin|c\/[^/]+)\/?$/.test(req.path);
+      const known = /^\/(|auth|checkout(\/[^/]+)?|privacidad|terminos|legal|cookies|reclamaciones|dashboard|superadmin|c\/[^/]+(\/mis-puntos)?)\/?$/.test(req.path);
       res.setHeader('Cache-Control', 'no-cache');
       res.status(known ? 200 : 404).type('html').send(indexHtml);
     });

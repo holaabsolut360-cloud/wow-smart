@@ -76,6 +76,15 @@ export default function Catalog() {
   const [appliedCoupon, setAppliedCoupon] = useState<any>(null);
   const [couponError, setCouponError] = useState("");
   const [paymentQrModal, setPaymentQrModal] = useState<'yape' | 'plin' | null>(null);
+  // v5: fidelización (solo si el negocio la activó)
+  const [loyaltyInfo, setLoyaltyInfo] = useState<any>(null);
+  const [loyaltyBirthday, setLoyaltyBirthday] = useState('');
+  const [loyaltyRewardId, setLoyaltyRewardId] = useState('');
+  const [lastOrderCode, setLastOrderCode] = useState<string | null>(null);
+  useEffect(() => {
+    if (!slug) return;
+    fetch(`/api/catalog/${encodeURIComponent(slug)}/fidelizacion`).then(r => r.ok ? r.json() : null).then(d => setLoyaltyInfo(d?.enabled ? d : null)).catch(() => {});
+  }, [slug]);
 
   const isServiceBusiness = company?.businessType === 'Estudio de Abogados' || company?.businessType === 'Servicios Profesionales' || company?.businessType === 'Agencia de Publicidad' || company?.businessType === 'Imprenta';
   const termProduct = isServiceBusiness ? 'Servicios' : 'Productos';
@@ -262,11 +271,18 @@ export default function Catalog() {
   const taxAmount = netAfterDiscount * TAX_RATE;
   const cartTotal = netAfterDiscount + taxAmount;
 
-  const applyCoupon = () => {
+  const applyCoupon = async () => {
     setCouponError("");
     const coupon = company?.coupons?.find(c => c.code === couponCode.toUpperCase() && c.active);
     if (coupon) {
       setAppliedCoupon(coupon);
+      gaTrack('coupon_applied', { catalog: company?.slug, code: coupon.code });
+    } else if (loyaltyInfo && couponCode) {
+      try {
+        const r = await fetch(`/api/catalog/${encodeURIComponent(company!.slug)}/cupon`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: couponCode, subtotal, phone: deliveryData.phone }) }).then(x => x.json());
+        if (r.ok) { setAppliedCoupon(r.coupon); gaTrack('coupon_applied', { catalog: company?.slug, code: r.coupon.code, loyalty: true }); }
+        else { setCouponError(r.reason || "Cupón no válido o expirado"); setAppliedCoupon(null); }
+      } catch { setCouponError("No se pudo validar el cupón"); }
     } else {
       setCouponError("Cupón no válido o expirado");
       setAppliedCoupon(null);
@@ -313,6 +329,8 @@ export default function Catalog() {
     } else if (company.address) {
       msg += `Recojo en: ${company.address}\n`;
     }
+    const chosenReward = loyaltyInfo?.rewards?.find((r: any) => r.id === loyaltyRewardId);
+    if (chosenReward) msg += `🎁 *Canje de puntos:* ${chosenReward.name} (${chosenReward.pointsCost} pts) — sujeto a verificación de la tienda\n`;
     msg += `*Método de Pago:* ${cartPaymentMethod}\n`;
     if (cartPaymentMethod === 'Yape' && company.yapeNumber) msg += `Yape del negocio: ${company.yapeNumber}\n`;
     if (cartPaymentMethod === 'Plin' && company.plinNumber) msg += `Plin del negocio: ${company.plinNumber}\n`;
@@ -343,6 +361,7 @@ export default function Catalog() {
       discount,
       tax: taxAmount,
       couponCode: appliedCoupon?.code,
+      loyalty: loyaltyInfo ? { birthday: loyaltyBirthday || undefined, rewardId: loyaltyRewardId || undefined } : undefined,
       paymentMethod: cartPaymentMethod,
       paymentProof: cartPaymentProof || undefined,
     };
@@ -351,8 +370,16 @@ export default function Catalog() {
       else localStorage.removeItem('ws_cliente');
     } catch {}
     try {
-      await apiClient.post('/api/orders', orderData);
+      const saved: any = await apiClient.post('/api/orders', orderData);
       gaTrack('order_created', { catalog: company.slug, currency: 'PEN', value: cartTotal, items: cart.length });
+      if (saved?.orderCode) {
+        setLastOrderCode(saved.orderCode);
+        try { localStorage.setItem(`ws_pedido_${company.slug}`, JSON.stringify({ code: saved.orderCode, phone: deliveryData.phone })); } catch {}
+        msg += `\n*Código de pedido:* ${saved.orderCode}\n`;
+        if (loyaltyInfo) msg += `⭐ Mis puntos: ${window.location.origin}/c/${company.slug}/mis-puntos?tel=${encodeURIComponent(deliveryData.phone.replace(/\D/g, ''))}&codigo=${saved.orderCode}\n`;
+      }
+      if (saved?.loyalty?.joined) gaTrack('loyalty_join', { catalog: company.slug });
+      if (chosenReward) gaTrack('reward_redeemed', { catalog: company.slug, reward: chosenReward.name, points: chosenReward.pointsCost });
     } catch(err) {
       console.error("Error guardando orden:", err);
     }
@@ -767,6 +794,23 @@ export default function Catalog() {
                       <span><b>Quiero ser cliente frecuente:</b> recordar mis datos en este celular y que la tienda me escriba con promociones por WhatsApp.</span>
                     </label>
                   </div>
+
+                  {loyaltyInfo && (
+                    <div className="mt-3 p-3 rounded-xl bg-indigo-50 border border-indigo-100 space-y-2" data-testid="cart-loyalty">
+                      <div className="text-sm font-bold text-indigo-800">⭐ Gana {Math.floor(netAfterDiscount * (loyaltyInfo.pointsPerSol || 0))} puntos con este pedido</div>
+                      <p className="text-xs text-indigo-700">Te identificamos con tu WhatsApp. Los puntos se suman cuando la tienda confirma tu pedido.</p>
+                      <label className="block text-xs text-slate-600">Cumpleaños (opcional, para tu regalo)
+                        <input type="date" value={loyaltyBirthday} onChange={e => setLoyaltyBirthday(e.target.value)} className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm" /></label>
+                      {loyaltyInfo.rewards?.length > 0 && (
+                        <label className="block text-xs text-slate-600">Canjear un premio con mis puntos
+                          <select value={loyaltyRewardId} onChange={e => setLoyaltyRewardId(e.target.value)} className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm">
+                            <option value="">No canjear ahora</option>
+                            {loyaltyInfo.rewards.map((r: any) => <option key={r.id} value={r.id}>{r.name} — {r.pointsCost} pts</option>)}
+                          </select></label>
+                      )}
+                      <Link to={`/c/${company.slug}/mis-puntos`} className="text-xs font-bold text-indigo-700 underline">Ver mis puntos</Link>
+                    </div>
+                  )}
 
                   {deliveryMethod === 'delivery' && (
                     <div className="space-y-3 pt-3">
