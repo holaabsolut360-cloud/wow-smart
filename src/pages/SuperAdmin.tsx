@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Link } from 'react-router-dom';
+import { PlatformMetrics, ReferralsAdmin } from '../components/superadmin/PlatformMetrics';
 import { 
   LayoutDashboard, 
   Building2, 
@@ -675,6 +676,8 @@ export default function SuperAdmin() {
 
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'metricas', label: 'Métricas', icon: BarChart3 },
+    { id: 'referidos', label: 'Referidos', icon: Handshake },
     { id: 'empresas', label: 'Empresas', icon: Building2 },
     { id: 'productos', label: 'Productos', icon: ShoppingBag },
     { id: 'cuentas', label: 'Cuentas de Usuarios', icon: UserCircle },
@@ -918,6 +921,8 @@ export default function SuperAdmin() {
             </div>
           )}
 
+          {activeTab === 'metricas' && <PlatformMetrics />}
+          {activeTab === 'referidos' && <ReferralsAdmin />}
           {activeTab === 'productos' && (
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
               <div className="p-6 border-b border-slate-200">

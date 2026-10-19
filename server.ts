@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import "dotenv/config";
+import compression from "compression";
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
@@ -225,19 +226,22 @@ async function startServer() {
   // solo se puedan cargar scripts/imágenes/conexiones de los dominios de
   // esta lista, nada más). Una mejora futura sería migrar esos dos
   // snippets a un patrón con nonce para poder quitar 'unsafe-inline'.
+  // Compresión gzip/brotli de respuestas (HTML, JS, CSS, JSON).
+  app.use(compression({ threshold: 1024 }));
   app.use(helmet({
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'", "https://www.googletagmanager.com", "https://connect.facebook.net", "https://static.cloudflareinsights.com"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "https://www.googletagmanager.com", "https://connect.facebook.net", "https://static.cloudflareinsights.com", "https://www.clarity.ms", "https://*.clarity.ms"],
         styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
         fontSrc: ["'self'", "https://fonts.gstatic.com"],
-        imgSrc: ["'self'", "data:", "blob:", "https://*.supabase.co", "https://api.dicebear.com", "https://www.facebook.com", "https://www.google-analytics.com"],
-        connectSrc: ["'self'", "https://*.supabase.co", "https://cloudflareinsights.com", "https://www.google-analytics.com", "https://www.googletagmanager.com", "https://www.facebook.com", "https://connect.facebook.net"],
+        imgSrc: ["'self'", "data:", "blob:", "https://*.supabase.co", "https://api.dicebear.com", "https://www.facebook.com", "https://www.google-analytics.com", "https://*.google-analytics.com", "https://www.googletagmanager.com", "https://*.clarity.ms", "https://c.bing.com"],
+        connectSrc: ["'self'", "https://*.supabase.co", "wss://*.supabase.co", "https://cloudflareinsights.com", "https://www.google-analytics.com", "https://*.google-analytics.com", "https://*.analytics.google.com", "https://www.googletagmanager.com", "https://www.facebook.com", "https://connect.facebook.net", "https://*.clarity.ms", "https://c.bing.com"],
         objectSrc: ["'none'"],
         baseUri: ["'self'"],
         formAction: ["'self'"],
         frameAncestors: ["'none'"],
+        frameSrc: ["'self'", "https://www.googletagmanager.com"],
       },
     },
     crossOriginEmbedderPolicy: false,
@@ -316,9 +320,12 @@ const SUBSCRIPTION_PLAN_PRICES: Record<string, number> = {
   "Negocio Pequeño": 39,
   "Empresa": 79,
 };
-const computeSubscriptionAmount = (planName: string): number | null => {
-  const basePrice = SUBSCRIPTION_PLAN_PRICES[planName];
-  if (basePrice === undefined) return null;
+// Plan anual: 12 meses con descuento de fidelidad (se cobra una sola vez).
+const ANNUAL_DISCOUNT_PCT = Math.min(50, Math.max(0, Number(process.env.ANNUAL_DISCOUNT_PCT || 20)));
+const computeSubscriptionAmount = (planName: string, months = 1): number | null => {
+  const monthly = SUBSCRIPTION_PLAN_PRICES[planName];
+  if (monthly === undefined) return null;
+  const basePrice = months === 12 ? Math.round(monthly * 12 * (1 - ANNUAL_DISCOUNT_PCT / 100) * 100) / 100 : monthly;
   const igv = Math.round(basePrice * IGV_RATE_SERVER * 100) / 100;
   return Math.round((basePrice + igv) * 100) / 100;
 };
@@ -961,7 +968,8 @@ const isBillingRoute = (path: string) => (
   matchesPath(path, '/subscription-payments') ||
   matchesPath(path, '/support-tickets') ||
   matchesPath(path, '/renewal') ||
-  matchesPath(path, '/growth')
+  matchesPath(path, '/growth') ||
+  matchesPath(path, '/loyalty')
 );
 
 const subscriptionGuard = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -1339,8 +1347,10 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
 
     if (fetchError || !payment) return res.status(404).json({ error: "Pago no encontrado" });
 
+    const periodMonths = Number(payment.period_months) === 12 || /^ANUAL/.test(String(payment.reference || '')) ? 12 : 1;
     const vencimiento = new Date();
-    vencimiento.setDate(vencimiento.getDate() + 30);
+    if (periodMonths === 12) vencimiento.setFullYear(vencimiento.getFullYear() + 1);
+    else vencimiento.setDate(vencimiento.getDate() + 30);
 
     let companyId = payment.company_id;
 
@@ -1383,12 +1393,17 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
 
     if (updateError) return res.status(500).json({ error: updateError.message });
 
+    // Referidos: el primer pago del referido deja el referido "calificado" (premio pendiente de aprobación).
+    if (companyId) {
+      try { await client.from('referrals').update({ status: 'calificado', qualified_at: new Date().toISOString() }).eq('referred_company_id', companyId).eq('status', 'pendiente'); } catch {}
+    }
+
     await logSuperAdminAction(
       "APROBAR_PAGO",
       "subscription_payment",
       req.params.id,
       payment.business_name,
-      `Pago de S/ ${payment.amount} (${payment.plan}) aprobado. Suscripción activada hasta ${vencimiento.toISOString().split("T")[0]}.`,
+      `Pago de S/ ${payment.amount} (${payment.plan}${periodMonths === 12 ? ', anual' : ''}) aprobado. Suscripción activada hasta ${vencimiento.toISOString().split("T")[0]}.`,
     );
 
     if (resend && payment.email) {
@@ -2291,6 +2306,7 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
         readOnly: ENFORCE_SUBSCRIPTION_EXPIRY && computed === 'Vencida', enforce: ENFORCE_SUBSCRIPTION_EXPIRY,
       },
       notice: notice ? { ...notice, channel } : null,
+      lastPayment: await (async () => { try { const { data } = await (supabaseAdmin || client).from('subscription_payments').select('amount,reviewed_at,plan').eq('company_id', row.id).eq('status', 'Aprobado').order('reviewed_at', { ascending: false }).limit(1).maybeSingle(); return data || null; } catch { return null; } })(),
       metrics: {
         available: events !== null,
         visits: events ? events.filter((e: any) => e.type === 'visit').length : 0,
@@ -2342,7 +2358,8 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     if (!user) return res.status(401).json({ error: "Unauthorized" });
     if (!client || !row) return res.status(404).json({ error: "Company not found" });
     const plan = String(req.body?.plan || '');
-    const amount = computeSubscriptionAmount(plan);
+    const months = req.body?.billing === 'anual' ? 12 : 1;
+    const amount = computeSubscriptionAmount(plan, months);
     if (amount === null) return res.status(400).json({ error: "Plan no reconocido" });
     const img = parseImageDataUrl(req.body?.proofDataUrl);
     if (!img) return res.status(400).json({ error: "Adjunta la captura de tu Yape" });
@@ -2357,16 +2374,267 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
       user_id: user.id, company_id: row.id, business_name: row.name, email: user.email || null,
       plan, amount, payment_method: 'Yape',
       reference: String(req.body?.reference || '').slice(0, 120) || (proofPath ? null : 'Captura no se pudo subir: pedir por WhatsApp'),
-      status: 'Pendiente', proof_path: proofPath,
+      status: 'Pendiente', proof_path: proofPath, period_months: months,
     };
     let { error } = await writer.from("subscription_payments").insert(payload);
+    if (error && /period_months/i.test(error.message || '')) {
+      delete payload.period_months;
+      if (months === 12) payload.reference = `ANUAL ${payload.reference || ''}`.trim();
+      ({ error } = await writer.from("subscription_payments").insert(payload));
+    }
     if (error && /proof_path/i.test(error.message || '')) {
       delete payload.proof_path;
       if (proofPath) payload.reference = `proof:${proofPath}`;
       ({ error } = await writer.from("subscription_payments").insert(payload));
     }
     if (error) return res.status(500).json({ error: error.message });
-    res.json({ ok: true, amount, proofUploaded: Boolean(proofPath) });
+    res.json({ ok: true, amount, months, proofUploaded: Boolean(proofPath) });
+  });
+
+
+  // ==========================================================================
+  // v4: fidelización (referidos, plan anual, catálogos inactivos, resumen
+  // semanal, clientes frecuentes) y métricas de plataforma para SuperAdmin.
+  // Todo degrada con elegancia si aún no se corrió v4.sql.
+  // ==========================================================================
+  const isoWeek = (d = new Date()) => {
+    const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+    const day = t.getUTCDay() || 7; t.setUTCDate(t.getUTCDate() + 4 - day);
+    const y0 = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
+    return `${t.getUTCFullYear()}w${Math.ceil(((t.getTime() - y0.getTime()) / 86400000 + 1) / 7)}`;
+  };
+  const makeReferralCode = (name: string) =>
+    (String(name || 'WOW').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z]/g, '').toUpperCase().slice(0, 5) || 'WOW')
+    + crypto.randomBytes(2).toString('hex').toUpperCase();
+  const normPhone = (p: any) => String(p || '').replace(/\D/g, '').replace(/^51(?=9\d{8}$)/, '');
+  const escHtml = (v: any) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  const ensureReferralCode = async (row: any) => {
+    if (row.referral_code !== undefined && row.referral_code) return row.referral_code;
+    if (row.referral_code === undefined) return null; // columna aún no existe (falta v4.sql)
+    const w = supabaseAdmin || supabase; if (!w) return null;
+    for (let i = 0; i < 3; i++) {
+      const code = makeReferralCode(row.name);
+      const { error } = await w.from('companies').update({ referral_code: code }).eq('id', row.id).is('referral_code', null);
+      if (!error) return code;
+    }
+    return null;
+  };
+
+  // Resumen de la semana de una empresa (sirve para el panel y para el correo).
+  const weeklySummaryFor = async (client: any, companyId: string) => {
+    const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+    const [ev, ord, lastProd] = await Promise.all([
+      client.from('catalog_events').select('type').eq('company_id', companyId).gte('created_at', weekAgo).limit(10000),
+      client.from('orders').select('total,customer_phone').eq('company_id', companyId).gte('created_at', weekAgo).limit(5000),
+      client.from('products').select('created_at').eq('company_id', companyId).order('created_at', { ascending: false }).limit(1),
+    ]);
+    const events = ev.data || []; const orders = ord.data || [];
+    const lastProductAt = lastProd.data?.[0]?.created_at || null;
+    return {
+      visits: events.filter((e: any) => e.type === 'visit').length,
+      whatsappClicks: events.filter((e: any) => e.type === 'whatsapp_click').length,
+      orders: orders.length,
+      sales: orders.reduce((s: number, o: any) => s + Number(o.total || 0), 0),
+      lastProductAt,
+      inactive: !lastProductAt || Date.now() - new Date(lastProductAt).getTime() > 7 * 86400000,
+    };
+  };
+
+  const summaryHtml = (company: any, s: any, inactive: boolean) => `<div style="font-family:sans-serif;max-width:560px;margin:auto;color:#0f172a">
+    <h2 style="color:#6d28d9">Tu semana en WowSmart</h2>
+    <p>Hola, este es el resumen de <b>${escHtml(company.name)}</b> de los últimos 7 días:</p>
+    <table style="width:100%;border-collapse:collapse;font-size:15px">
+      <tr><td style="padding:8px;border-bottom:1px solid #e2e8f0">👀 Visitas a tu catálogo</td><td style="text-align:right"><b>${s.visits}</b></td></tr>
+      <tr><td style="padding:8px;border-bottom:1px solid #e2e8f0">💬 Clics a tu WhatsApp</td><td style="text-align:right"><b>${s.whatsappClicks}</b></td></tr>
+      <tr><td style="padding:8px;border-bottom:1px solid #e2e8f0">🛍️ Pedidos</td><td style="text-align:right"><b>${s.orders}</b></td></tr>
+      <tr><td style="padding:8px">💰 Ventas</td><td style="text-align:right"><b>S/ ${s.sales.toFixed(2)}</b></td></tr>
+    </table>
+    ${inactive ? `<p style="background:#fef3c7;padding:12px;border-radius:8px">💡 Hace más de 7 días que no agregas productos. Los catálogos con novedades reciben más visitas: sube algo nuevo hoy.</p>` : ''}
+    <p><a href="${publicBaseUrl}/dashboard" style="background:#6d28d9;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:bold">Ir a mi panel</a></p>
+    <p style="color:#64748b;font-size:12px">Equipo WowSmart · Recibes este correo porque tienes un catálogo en WowSmart.</p></div>`;
+
+  // Tarea periódica: cada 6 h revisa catálogos inactivos y, los lunes, envía el resumen semanal.
+  // Se registra en company_notices (UNIQUE company_id+kind) para no repetir nunca un aviso.
+  const runLoyaltyJob = async () => {
+    const w = supabaseAdmin; if (!w || !useSupabaseDb) return;
+    try {
+      const { data: companies } = await w.from('companies').select('id,name,user_id,created_at,weekly_summary_opt_out').limit(2000);
+      const week = isoWeek(); const isMonday = new Date().getDay() === 1;
+      for (const c of companies || []) {
+        if (!c.created_at || Date.now() - new Date(c.created_at).getTime() < 2 * 86400000) continue;
+        const s = await weeklySummaryFor(w, c.id);
+        const kinds: string[] = [];
+        if (s.inactive) kinds.push(`inactive_${week}`);
+        if (isMonday && !c.weekly_summary_opt_out) kinds.push(`weekly_${week}`);
+        for (const kind of kinds) {
+          const { error } = await w.from('company_notices').insert({ company_id: c.id, kind, channel: resend ? 'email' : 'panel' });
+          if (error) continue; // ya registrado o tabla inexistente
+          if (!resend || !c.user_id) continue;
+          try {
+            const { data: u } = await w.auth.admin.getUserById(c.user_id);
+            const email = u?.user?.email; if (!email) continue;
+            const weekly = kind.startsWith('weekly_');
+            await resend.emails.send({
+              from: 'WowSmart <onboarding@resend.dev>', to: [email],
+              subject: weekly ? `Tu resumen semanal — ${c.name}` : `${c.name}: tu catálogo te extraña 👋`,
+              html: summaryHtml(c, s, s.inactive),
+            });
+          } catch { /* el aviso queda en el panel */ }
+        }
+      }
+    } catch (e) { console.error('loyalty job', e); }
+  };
+  if (process.env.NODE_ENV === 'production' && process.env.DISABLE_LOYALTY_JOB !== 'true') {
+    setTimeout(runLoyaltyJob, 60 * 1000);
+    setInterval(runLoyaltyJob, 6 * 60 * 60 * 1000).unref?.();
+  }
+
+  // Panel del dueño: fidelización (código de referido, resumen, inactividad, clientes frecuentes).
+  app.get('/api/loyalty/me', async (req, res) => {
+    const { user, client, row } = await getOwnedCompanyRow(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+    if (!client || !row) return res.status(404).json({ error: 'Company not found' });
+    const code = await ensureReferralCode(row);
+    const w = supabaseAdmin || client;
+    const [summary, refs, ordersRes] = await Promise.all([
+      weeklySummaryFor(client, row.id),
+      w.from('referrals').select('id,status,created_at,referred_company_id').eq('referrer_company_id', row.id).order('created_at', { ascending: false }),
+      client.from('orders').select('customer_name,customer_phone,total,created_at,frequent_opt_in').eq('company_id', row.id).order('created_at', { ascending: false }).limit(3000),
+    ]);
+    let orders: any[] = ordersRes.data || [];
+    if (ordersRes.error) { // columna frequent_opt_in aún no existe
+      const r2 = await client.from('orders').select('customer_name,customer_phone,total,created_at').eq('company_id', row.id).order('created_at', { ascending: false }).limit(3000);
+      orders = r2.data || [];
+    }
+    const byPhone: Record<string, any> = {};
+    for (const o of orders) {
+      const p = normPhone(o.customer_phone); if (p.length < 7) continue;
+      const k = byPhone[p] ||= { phone: p, name: o.customer_name, orders: 0, total: 0, lastAt: o.created_at, optIn: false };
+      k.orders++; k.total += Number(o.total || 0); if (o.frequent_opt_in) k.optIn = true;
+    }
+    const customers = Object.values(byPhone).sort((a: any, b: any) => b.orders - a.orders || b.total - a.total);
+    const repeat = customers.filter((c: any) => c.orders >= 2);
+    res.json({
+      referral: refs.error ? { available: false } : {
+        available: Boolean(code), code, link: code ? `${publicBaseUrl}/auth?mode=register&ref=${code}` : null,
+        total: (refs.data || []).length,
+        pending: (refs.data || []).filter((r: any) => r.status === 'pendiente' || r.status === 'calificado').length,
+        rewarded: (refs.data || []).filter((r: any) => r.status === 'aprobado').length,
+      },
+      summary, weeklyOptOut: Boolean(row.weekly_summary_opt_out), emailEnabled: Boolean(resend),
+      annualDiscountPct: ANNUAL_DISCOUNT_PCT,
+      customers: {
+        total: customers.length, repeatCount: repeat.length,
+        repeatRate: customers.length ? Math.round((repeat.length / customers.length) * 100) : 0,
+        top: repeat.slice(0, 20),
+      },
+    });
+  });
+  app.post('/api/loyalty/weekly-summary', async (req, res) => {
+    const { user, row } = await getOwnedCompanyRow(req);
+    if (!user || !row) return res.status(401).json({ error: 'Unauthorized' });
+    const w = supabaseAdmin; if (!w) return res.status(503).json({ error: 'No disponible' });
+    const { error } = await w.from('companies').update({ weekly_summary_opt_out: !req.body?.enabled }).eq('id', row.id);
+    if (error) return res.status(500).json({ error: 'Falta actualizar la base (v4.sql)' });
+    res.json({ ok: true });
+  });
+
+  // ---- SuperAdmin: referidos (el premio se da SOLO cuando el superadmin aprueba) ----
+  const extendCompany = async (w: any, companyId: string, days: number) => {
+    const { data: c } = await w.from('companies').select('subscription_ends_at').eq('id', companyId).maybeSingle();
+    const base = c?.subscription_ends_at && new Date(c.subscription_ends_at) > new Date() ? new Date(c.subscription_ends_at) : new Date();
+    base.setDate(base.getDate() + days);
+    await w.from('companies').update({ subscription_ends_at: base.toISOString().split('T')[0] }).eq('id', companyId);
+    return base.toISOString().split('T')[0];
+  };
+  app.get('/api/superadmin/referidos', requireSuperAdmin, async (_req, res) => {
+    const w = supabaseAdmin || supabase; if (!w) return res.status(503).json({ error: 'Supabase is not configured' });
+    const { data, error } = await w.from('referrals').select('*').order('created_at', { ascending: false }).limit(500);
+    if (error) return res.json({ available: false, items: [] });
+    const ids = Array.from(new Set((data || []).flatMap((r: any) => [r.referrer_company_id, r.referred_company_id])));
+    const { data: cs } = ids.length ? await w.from('companies').select('id,name').in('id', ids) : { data: [] as any[] };
+    const nm = Object.fromEntries((cs || []).map((c: any) => [c.id, c.name]));
+    res.json({ available: true, items: (data || []).map((r: any) => ({ ...r, referrerName: nm[r.referrer_company_id] || '—', referredName: nm[r.referred_company_id] || '—' })) });
+  });
+  app.post('/api/superadmin/referidos/:id/:accion', requireSuperAdmin, async (req, res) => {
+    const w = supabaseAdmin || supabase; if (!w) return res.status(503).json({ error: 'Supabase is not configured' });
+    const accion = req.params.accion;
+    if (!['aprobar', 'rechazar'].includes(accion)) return res.status(400).json({ error: 'Acción inválida' });
+    const { data: r } = await w.from('referrals').select('*').eq('id', req.params.id).maybeSingle();
+    if (!r) return res.status(404).json({ error: 'Referido no encontrado' });
+    if (r.status === 'aprobado' || r.status === 'rechazado') return res.status(409).json({ error: 'Ya fue revisado' });
+    if (accion === 'aprobar') {
+      const a = await extendCompany(w, r.referrer_company_id, 30);
+      const b = await extendCompany(w, r.referred_company_id, 30);
+      await w.from('referrals').update({ status: 'aprobado', reviewed_at: new Date().toISOString() }).eq('id', r.id);
+      await logSuperAdminAction('APROBAR_REFERIDO', 'referral', r.id, r.code, `+1 mes gratis para ambos (vencen ${a} y ${b}).`);
+    } else {
+      await w.from('referrals').update({ status: 'rechazado', reviewed_at: new Date().toISOString() }).eq('id', r.id);
+      await logSuperAdminAction('RECHAZAR_REFERIDO', 'referral', r.id, r.code, 'Referido rechazado.');
+    }
+    res.json({ ok: true });
+  });
+
+  // ---- SuperAdmin: métricas de la plataforma ----
+  app.get('/api/superadmin/metricas', requireSuperAdmin, async (req, res) => {
+    const w = supabaseAdmin || supabase; if (!w) return res.status(503).json({ error: 'Supabase is not configured' });
+    const days = Math.min(365, Math.max(7, Number(req.query.dias) || 30));
+    const since = new Date(Date.now() - days * 86400000).toISOString();
+    const [cRes, pRes, eRes, oRes, prodRes, payRes] = await Promise.all([
+      w.from('companies').select('id,name,plan,subscription_status,subscription_ends_at,created_at,whatsapp').limit(5000),
+      w.from('subscription_payments').select('company_id,amount,status,created_at,plan').limit(10000),
+      w.from('catalog_events').select('company_id,type,created_at').gte('created_at', since).limit(50000),
+      w.from('orders').select('company_id,total,created_at,type').gte('created_at', since).limit(50000),
+      w.from('products').select('company_id').limit(50000),
+      w.from('subscription_payments').select('id', { count: 'exact', head: true }).eq('status', 'Pendiente'),
+    ]);
+    const companies = cRes.data || []; const pays = pRes.data || []; const events = eRes.data || []; const orders = oRes.data || [];
+    const withProducts = new Set((prodRes.data || []).map((p: any) => p.company_id));
+    const approved = pays.filter((p: any) => p.status === 'Aprobado');
+    const paying = new Set(approved.map((p: any) => p.company_id));
+    const states = companies.map((c: any) => computeSubscriptionStatus(c.subscription_status, c.subscription_ends_at));
+    const signups = companies.filter((c: any) => c.created_at >= since).length;
+    const activated = companies.filter((c: any) => withProducts.has(c.id) && isValidWhatsapp(c.whatsapp));
+    const everPaying = companies.filter((c: any) => paying.has(c.id));
+    const activePaying = companies.filter((c: any, i: number) => paying.has(c.id) && states[i] === 'Activa');
+    const churned = everPaying.filter((c: any) => !activePaying.includes(c));
+    const mrr = activePaying.reduce((s: number, c: any) => s + (SUBSCRIPTION_PLAN_PRICES[c.plan] || 0), 0);
+    // Serie diaria
+    const series: Record<string, any> = {};
+    for (let i = days - 1; i >= 0; i--) { const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10); series[d] = { fecha: d, registros: 0, visitas: 0, whatsapp: 0, pedidos: 0 }; }
+    companies.forEach((c: any) => { const d = String(c.created_at || '').slice(0, 10); if (series[d]) series[d].registros++; });
+    events.forEach((e: any) => { const d = String(e.created_at).slice(0, 10); if (!series[d]) return; if (e.type === 'visit') series[d].visitas++; if (e.type === 'whatsapp_click') series[d].whatsapp++; });
+    orders.forEach((o: any) => { const d = String(o.created_at).slice(0, 10); if (series[d]) series[d].pedidos++; });
+    // Ranking de catálogos
+    const rank: Record<string, any> = {};
+    companies.forEach((c: any) => { rank[c.id] = { id: c.id, nombre: c.name, visitas: 0, whatsapp: 0, pedidos: 0 }; });
+    events.forEach((e: any) => { const r = rank[e.company_id]; if (!r) return; if (e.type === 'visit') r.visitas++; if (e.type === 'whatsapp_click') r.whatsapp++; });
+    orders.forEach((o: any) => { const r = rank[o.company_id]; if (r) r.pedidos++; });
+    const pct = (a: number, b: number) => b ? Math.round((a / b) * 1000) / 10 : 0;
+    res.json({
+      dias: days,
+      totalEmpresas: companies.length,
+      registros: signups,
+      activadas: activated.length,
+      tasaActivacion: pct(activated.length, companies.length),
+      enPrueba: states.filter((s: string) => s === 'Prueba Gratuita').length,
+      pagadoras: activePaying.length,
+      conversionPruebaPago: pct(everPaying.length, companies.length),
+      mrr, arr: mrr * 12,
+      churn: pct(churned.length, everPaying.length),
+      bajas: churned.length,
+      visitas: events.filter((e: any) => e.type === 'visit').length,
+      clicsWhatsapp: events.filter((e: any) => e.type === 'whatsapp_click').length,
+      compartidos: events.filter((e: any) => e.type === 'share').length,
+      pedidos: orders.length,
+      ventasCatalogos: orders.reduce((s: number, o: any) => s + Number(o.total || 0), 0),
+      ingresosAprobados: approved.filter((p: any) => p.created_at >= since).reduce((s: number, p: any) => s + Number(p.amount || 0), 0),
+      pagosPendientes: payRes.count || 0,
+      metricasDisponibles: !eRes.error,
+      serie: Object.values(series),
+      topCatalogos: Object.values(rank).sort((a: any, b: any) => b.visitas - a.visitas || b.pedidos - a.pedidos).slice(0, 10),
+    });
   });
 
   app.get("/api/companies", (req, res) => {
@@ -2476,6 +2744,17 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
         const rows = templateProducts.map((p: any) => stripUndefined(fromProduct(normalizeProductPayload({ ...p, companyId: data.id, itemType: 'Producto', stock: null }))));
         const { error: pErr } = await client.from("products").insert(rows);
         if (pErr) console.warn("[onboarding] No se pudieron crear productos de ejemplo:", pErr.message);
+      }
+      // Referidos: si llegó con un código válido, se registra (el premio lo aprueba el superadmin).
+      const refCode = String(req.body?.referralCode || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 16);
+      if (refCode && supabaseAdmin) {
+        try {
+          const { data: referrer } = await supabaseAdmin.from('companies').select('id,user_id').eq('referral_code', refCode).maybeSingle();
+          if (referrer && referrer.id !== data.id && referrer.user_id !== user.id) {
+            await supabaseAdmin.from('companies').update({ referred_by: referrer.id }).eq('id', data.id);
+            await supabaseAdmin.from('referrals').insert({ referrer_company_id: referrer.id, referred_company_id: data.id, code: refCode, status: 'pendiente' });
+          }
+        } catch (e) { console.warn('[onboarding] referido no registrado'); }
       }
       return res.json(toCompany(data));
     }
@@ -3133,13 +3412,20 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
       body.status = 'Nuevo';
       body.items = Array.isArray(body.items) ? body.items.slice(0, 100) : [];
       if (!body.companyId || body.items.length === 0) return res.status(400).json({ error: "Pedido vacío" });
+      body.frequentOptIn = body.frequentOptIn === true && Boolean(body.customerPhone);
     }
     if (useSupabaseDb) {
       const client = getRequestSupabase(req);
       if (!client) return res.status(503).json({ error: "Supabase is not configured" });
 
       // Inserción sin .select(): el visitante anónimo no tiene permiso de lectura.
-      let { error } = await client.from("orders").insert(stripUndefined(fromOrder(body)));
+      const orderRow: any = stripUndefined(fromOrder(body));
+      if (body.frequentOptIn) orderRow.frequent_opt_in = true;
+      let { error } = await client.from("orders").insert(orderRow);
+      if (error && /frequent_opt_in/i.test(error.message || '')) {
+        delete orderRow.frequent_opt_in;
+        ({ error } = await client.from("orders").insert(orderRow));
+      }
       if (error && body.status === 'Nuevo' && /check|status/i.test(error.message || '')) {
         // La base aún no tiene el estado "Nuevo" (falta v3.sql): se guarda como Pendiente.
         ({ error } = await client.from("orders").insert(stripUndefined(fromOrder({ ...body, status: 'Pendiente' }))));
@@ -3843,9 +4129,15 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath, { index: false }));
+    // Archivos con hash (assets/) se guardan 1 año en caché; imágenes 7 días; index.html nunca.
+    app.use('/assets', express.static(path.join(distPath, 'assets'), { index: false, immutable: true, maxAge: '365d', fallthrough: false }));
+    app.use(express.static(distPath, { index: false, maxAge: '7d', setHeaders: (res, p) => { if (p.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache'); } }));
     const fs = await import('fs');
-    const indexHtml = fs.readFileSync(path.join(distPath, 'index.html'), 'utf8');
+    const analyticsCfg: Record<string, string> = {};
+    const idRules: Record<string, RegExp> = { VITE_GA4_ID: /^G-[A-Z0-9]+$/, VITE_GTM_ID: /^GTM-[A-Z0-9]+$/, VITE_META_PIXEL_ID: /^\d{6,20}$/, VITE_CLARITY_ID: /^[a-z0-9]{6,20}$/i };
+    for (const [k, re] of Object.entries(idRules)) { const v = String(process.env[k] || '').trim(); if (re.test(v)) analyticsCfg[k] = v; }
+    const indexHtml = fs.readFileSync(path.join(distPath, 'index.html'), 'utf8')
+      .replace('</head>', `<meta name="ws-analytics" content='${JSON.stringify(analyticsCfg)}' />\n</head>`);
     const esc = (v: any) => String(v ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const ogCache = new Map<string, { html: string; at: number }>();
     const catalogHtml = async (slug: string) => {
@@ -3883,6 +4175,7 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
         } catch { /* cae al index normal */ }
       }
       const known = /^\/(|auth|checkout(\/[^/]+)?|privacidad|terminos|legal|cookies|reclamaciones|dashboard|superadmin|c\/[^/]+)\/?$/.test(req.path);
+      res.setHeader('Cache-Control', 'no-cache');
       res.status(known ? 200 : 404).type('html').send(indexHtml);
     });
   }

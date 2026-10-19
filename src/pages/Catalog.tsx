@@ -9,12 +9,14 @@ import { Company, Product } from "../types";
 import { apiClient } from "../services/api";
 import { resolveCatalogTaxRate, taxLabel } from "../utils/pricingCalculator";
 import { ImageUpload } from "../components/ImageUpload";
+import { track as gaTrack } from '../lib/analytics';
 import { normalizeWhatsapp } from "../config/templates";
 
 const track = (slug: string | undefined, type: string, productId?: string) => {
   if (!slug) return;
   try {
     const body = JSON.stringify({ slug, type, productId });
+    if (type === 'whatsapp_click') gaTrack('whatsapp_click', { catalog: slug, product_id: productId });
     if (navigator.sendBeacon) navigator.sendBeacon('/api/track', new Blob([body], { type: 'application/json' }));
     else fetch('/api/track', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true });
   } catch { /* sin métricas */ }
@@ -64,7 +66,10 @@ export default function Catalog() {
 
   // Delivery & Coupons
   const [deliveryMethod, setDeliveryMethod] = useState<'delivery' | 'pickup'>('delivery');
-  const [deliveryData, setDeliveryData] = useState({ address: '', reference: '', recipient: '', phone: '' });
+  // Cliente frecuente: se recuerdan nombre y WhatsApp en este dispositivo (solo si el cliente acepta).
+  const savedCustomer = (() => { try { return JSON.parse(localStorage.getItem('ws_cliente') || 'null'); } catch { return null; } })();
+  const [deliveryData, setDeliveryData] = useState({ address: '', reference: '', recipient: savedCustomer?.name || '', phone: savedCustomer?.phone || '' });
+  const [frequentOptIn, setFrequentOptIn] = useState<boolean>(Boolean(savedCustomer));
   const [cartPaymentMethod, setCartPaymentMethod] = useState<'Efectivo' | 'Yape' | 'Plin'>('Efectivo');
   const [cartPaymentProof, setCartPaymentProof] = useState('');
   const [couponCode, setCouponCode] = useState("");
@@ -322,6 +327,7 @@ export default function Catalog() {
       companyId: company.id,
       customerName: deliveryData.recipient || 'Cliente Anónimo',
       customerPhone: deliveryData.phone,
+      frequentOptIn,
       deliveryMethod,
       address: deliveryData.address,
       reference: deliveryData.reference,
@@ -341,7 +347,12 @@ export default function Catalog() {
       paymentProof: cartPaymentProof || undefined,
     };
     try {
+      if (frequentOptIn) localStorage.setItem('ws_cliente', JSON.stringify({ name: deliveryData.recipient, phone: deliveryData.phone }));
+      else localStorage.removeItem('ws_cliente');
+    } catch {}
+    try {
       await apiClient.post('/api/orders', orderData);
+      gaTrack('order_created', { catalog: company.slug, currency: 'PEN', value: cartTotal, items: cart.length });
     } catch(err) {
       console.error("Error guardando orden:", err);
     }
@@ -383,6 +394,7 @@ export default function Catalog() {
         <div className="flex items-center gap-4">
           <button 
             onClick={() => setCartOpen(true)}
+            aria-label="Ver carrito"
             className="relative p-2.5 rounded-xl border border-slate-200 text-slate-700 bg-white hover:bg-slate-50 transition-colors shadow-sm"
           >
             <ShoppingCart className="w-5 h-5" />
@@ -477,7 +489,7 @@ export default function Catalog() {
                 }`}
               >
                 <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center overflow-hidden text-xl mb-1">
-                  {categoryImage(cat) ? <img src={categoryImage(cat)} alt="" className="w-full h-full object-cover" /> : '🏷️'}
+                  {categoryImage(cat) ? <img src={categoryImage(cat)} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" /> : '🏷️'}
                 </div>
                 <span className="text-xs font-bold text-slate-700 truncate w-full text-center">{cat}</span>
               </button>
@@ -489,7 +501,7 @@ export default function Catalog() {
       {/* Grid */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8 sm:py-10">
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-6">
-          {filteredProducts.map(p => {
+          {filteredProducts.map((p, idx) => {
             const hasDiscount = p.salePrice && p.salePrice < p.price;
             const productTaxRate = resolveTaxRate(p);
             return (
@@ -502,19 +514,19 @@ export default function Catalog() {
               >
                 <div className="aspect-square bg-slate-100 relative overflow-hidden">
                   {p.image ? (
-                    <img src={p.image} alt={p.name} className="w-full h-full object-cover" />
+                    <img src={p.image} alt={p.name} width={400} height={400} loading={idx < 2 ? "eager" : "lazy"} decoding="async" {...(idx === 0 ? { fetchPriority: "high" as const } : {})} className="w-full h-full object-cover" />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center text-4xl opacity-20">📦</div>
                   )}
                   {hasDiscount && (
-                    <div className="absolute top-2 right-2 sm:top-3 sm:right-3 bg-rose-500 text-white text-[9px] sm:text-[10px] font-bold px-1.5 sm:px-2 py-0.5 sm:py-1 rounded sm:rounded-md uppercase tracking-wider">
+                    <div className="absolute top-2 right-2 sm:top-3 sm:right-3 bg-rose-700 text-white text-[9px] sm:text-[10px] font-bold px-1.5 sm:px-2 py-0.5 sm:py-1 rounded sm:rounded-md uppercase tracking-wider">
                       -{Math.round(((p.price - p.salePrice!) / p.price) * 100)}%
                     </div>
                   )}
                 </div>
                 <div className="p-3 sm:p-5 flex flex-col flex-1">
-                  <div className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider mb-1" style={{ color: company.color }}>{p.category}</div>
-                  <h3 className="font-bold text-slate-800 text-xs sm:text-[15px] leading-tight mb-2 line-clamp-2">{p.name}</h3>
+                  <div className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider mb-1" style={{ color: `color-mix(in srgb, ${company.color || "#6d28d9"} 75%, black)` }}>{p.category}</div>
+                  <h2 className="font-bold text-slate-800 text-xs sm:text-[15px] leading-tight mb-2 line-clamp-2">{p.name}</h2>
                   
                   <div className="flex items-center gap-1 text-amber-400 text-[9px] sm:text-[10px] mb-1.5 hidden sm:flex">
                     ★★★★★ <span className="text-slate-500 ml-1">4.9</span>
@@ -528,7 +540,7 @@ export default function Catalog() {
                     ) : (
                       <>
                         <div className="w-1 h-1 sm:w-1.5 sm:h-1.5 rounded-full bg-emerald-500"></div>
-                        <span className="text-emerald-500">
+                        <span className="text-emerald-700">
                           {p.stock ? `En Stock: ${p.stock}` : 'Disponible'}
                         </span>
                       </>
@@ -545,7 +557,7 @@ export default function Catalog() {
                     <div className="flex flex-col gap-0 sm:gap-0.5">
                       {hasDiscount ? (
                         <>
-                          <span className="text-[9px] sm:text-xs text-slate-400 line-through">{company.currency || 'S/'} {p.price.toFixed(2)}</span>
+                          <span className="text-[9px] sm:text-xs text-slate-500 line-through">{company.currency || 'S/'} {p.price.toFixed(2)}</span>
                           <span className="text-sm sm:text-lg font-bold text-slate-900">{company.currency || 'S/'} {p.salePrice!.toFixed(2)}</span>
                           {productTaxRate > 0 && <span className="text-[9px] sm:text-[10px] text-slate-500 font-semibold">{taxText(productTaxRate)}</span>}
                         </>
@@ -570,6 +582,7 @@ export default function Catalog() {
                           }
                           addToCart(p); 
                         }} 
+                        aria-label={`Agregar ${p.name} al carrito`}
                         className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl border border-slate-200 flex items-center justify-center text-slate-500 hover:text-indigo-500 hover:border-indigo-200 hover:bg-indigo-50 transition-all shadow-sm bg-white"
                       >
                         <ShoppingCart className="w-3 h-3 sm:w-4 sm:h-4" />
@@ -577,7 +590,7 @@ export default function Catalog() {
                       <button 
                         onClick={(e) => { e.stopPropagation(); setSelectedProduct(p); setQty(1); }}
                         className={`px-2 sm:px-4 h-8 sm:h-10 rounded-lg sm:rounded-xl font-bold text-white text-[10px] sm:text-xs transition-colors shadow-sm flex-1 sm:flex-none whitespace-nowrap ${p.stock === 0 ? 'bg-slate-300 cursor-not-allowed' : ''}`}
-                        style={p.stock === 0 ? {} : { backgroundColor: '#20bd5a' }}
+                        style={p.stock === 0 ? {} : { backgroundColor: '#15803d' }}
                       >
                         {p.stock === 0 ? 'Agotado' : termOrderBtn}
                       </button>
@@ -602,7 +615,7 @@ export default function Catalog() {
             <div className="flex items-center gap-3 mb-3">
               {company.logo && (
                 <div className="h-10 w-10 rounded-lg bg-white flex items-center justify-center overflow-hidden flex-shrink-0 p-1">
-                  <img src={company.logo} alt={company.name} className="max-h-full max-w-full object-contain" />
+                  <img src={company.logo} alt={company.name} loading="lazy" decoding="async" className="max-h-full max-w-full object-contain" />
                 </div>
               )}
               <h2 className="text-xl font-bold text-white">{company.name}</h2>
@@ -733,17 +746,26 @@ export default function Catalog() {
                     <input 
                       type="text" 
                       placeholder="Nombre completo *"
+                      aria-label="Nombre completo"
+                      autoComplete="name"
                       value={deliveryData.recipient}
                       onChange={e => setDeliveryData({...deliveryData, recipient: e.target.value})}
                       className="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 text-sm outline-none focus:border-indigo-500 transition-colors"
                     />
                     <input 
-                      type="text" 
+                      type="tel" 
+                      inputMode="tel"
+                      autoComplete="tel"
+                      aria-label="Número de WhatsApp"
                       placeholder="Número de WhatsApp *"
                       value={deliveryData.phone}
                       onChange={e => setDeliveryData({...deliveryData, phone: e.target.value})}
                       className="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 text-sm outline-none focus:border-indigo-500 transition-colors"
                     />
+                    <label className="flex items-start gap-2 text-xs text-slate-600 cursor-pointer">
+                      <input type="checkbox" checked={frequentOptIn} onChange={e => setFrequentOptIn(e.target.checked)} className="mt-0.5 w-4 h-4 accent-indigo-600" />
+                      <span><b>Quiero ser cliente frecuente:</b> recordar mis datos en este celular y que la tienda me escriba con promociones por WhatsApp.</span>
+                    </label>
                   </div>
 
                   {deliveryMethod === 'delivery' && (
@@ -952,7 +974,7 @@ export default function Catalog() {
                 ) : (
                   <>
                     <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
-                    <span className="text-emerald-500">
+                    <span className="text-emerald-700">
                       {selectedProduct.stock ? `En Stock: ${selectedProduct.stock} unidades` : 'Disponible'}
                     </span>
                   </>

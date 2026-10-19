@@ -1,3 +1,4 @@
+import { track as gaTrack } from '../lib/analytics';
 import React, { useState } from 'react';
 import { WHATSAPP_ENABLED, whatsappLink } from '../config/site';
 import { motion, AnimatePresence } from 'motion/react';
@@ -150,6 +151,8 @@ export default function Checkout() {
       
       if (error) throw error;
 
+      gaTrack('sign_up', { method: 'checkout' });
+      gaTrack('renewal_started', { source: 'checkout' });
       await submitPendingPayment(formData.businessName, formData.email || "cliente@ejemplo.com");
 
       setStep('success');

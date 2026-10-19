@@ -1,3 +1,4 @@
+import { track as gaTrack } from '../../lib/analytics';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import React, { useMemo, useState } from 'react';
 import { motion } from 'motion/react';
@@ -57,6 +58,7 @@ export function ProductsTab({ company, categories }: ProductsTabProps) {
             companyId: company?.id,
             ...newProduct
           });
+        gaTrack('add_product', { category: (newProduct as any).category });
         return res;
       }
     },

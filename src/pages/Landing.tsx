@@ -151,7 +151,7 @@ export default function Landing() {
               <p className="text-sm text-indigo-100 mt-2 min-h-[40px]">Controla las ventas de tu negocio desde un solo lugar.</p>
               <div className="flex items-baseline gap-1 mt-4">
                 <span className="text-4xl font-black text-white">S/ 39</span>
-                <span className="text-indigo-200 font-medium">/mes</span>
+                <span className="text-indigo-100 font-medium">/mes</span>
               </div>
             </div>
             <ul className="flex-grow space-y-4 mb-8">
@@ -193,7 +193,7 @@ export default function Landing() {
               </li>
             </ul>
             <div className="mt-auto pt-6 border-t border-indigo-500/50">
-              <p className="text-xs text-indigo-200 mb-4 font-medium italic">Ideal para: tiendas, bodegas, restaurantes y negocios con ventas diarias.</p>
+              <p className="text-xs text-indigo-100 mb-4 font-medium italic">Ideal para: tiendas, bodegas, restaurantes y negocios con ventas diarias.</p>
               <Link to="/checkout/negocio" className="block text-center w-full py-3.5 rounded-xl bg-white text-indigo-600 font-bold shadow-md hover:bg-slate-50 transition-colors">
                 Contratar Negocio
               </Link>
@@ -413,7 +413,7 @@ export default function Landing() {
             </ul>
           </div>
         </div>
-        <div className="max-w-7xl mx-auto mt-12 pt-8 border-t border-white/10 text-center text-xs text-slate-500">
+        <div className="max-w-7xl mx-auto mt-12 pt-8 border-t border-white/10 text-center text-xs text-slate-400">
           Copyright © 2026 ABSOLUT360 WOW SACS | RUC: 20613616978
         </div>
       </footer>

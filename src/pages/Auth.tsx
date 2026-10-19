@@ -1,3 +1,4 @@
+import { track as gaTrack } from '../lib/analytics';
 import React, { useState } from 'react';
 import { useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -21,6 +22,14 @@ export default function Auth() {
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [companyName, setCompanyName] = useState('');
+  // Programa de referidos: ?ref=CODIGO se guarda hasta que el negocio termine su registro.
+  const [referralCode] = useState<string>(() => {
+    try {
+      const fromUrl = new URLSearchParams(window.location.search).get('ref');
+      if (fromUrl) localStorage.setItem('ws_ref', fromUrl.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 16));
+      return localStorage.getItem('ws_ref') || '';
+    } catch { return ''; }
+  });
   const [companyWhatsapp, setCompanyWhatsapp] = useState('');
   const [rubro, setRubro] = useState<string>('tienda');
   const [useTemplate, setUseTemplate] = useState(true);
@@ -59,6 +68,8 @@ export default function Auth() {
           }
         });
         if (error) throw error;
+        gaTrack('sign_up', { method: 'email' });
+        gaTrack('start_trial', { trial_days: 15 });
         setView(data.session ? 'onboarding' : 'reset-sent');
       } else if (view === 'forgot-password') {
         const { error } = await supabase.auth.resetPasswordForEmail(email);
@@ -207,6 +218,7 @@ export default function Auth() {
                 <div className="mb-8">
                   <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight mb-2">Crea tu cuenta</h2>
                   <p className="text-slate-500">Comienza a vender hoy mismo con tu catálogo digital.</p>
+                  {referralCode && <p className="mt-3 inline-block text-sm font-bold px-3 py-1.5 rounded-full bg-emerald-50 text-emerald-700">🎁 Te invitaron: 1 mes gratis al pagar tu primer plan</p>}
                 </div>
 
                 <form onSubmit={handleSubmit} className="space-y-4">
@@ -379,7 +391,7 @@ export default function Auth() {
                         'Content-Type': 'application/json',
                         'Authorization': 'Bearer ' + session.data.session.access_token
                       },
-                      body: JSON.stringify({ name: companyName, whatsapp: companyWhatsapp, rubro, useTemplate: rubro !== 'otro' && useTemplate })
+                      body: JSON.stringify({ name: companyName, whatsapp: companyWhatsapp, rubro, useTemplate: rubro !== 'otro' && useTemplate, referralCode: referralCode || undefined })
                     });
 
                     if (!res.ok) {
@@ -387,6 +399,8 @@ export default function Auth() {
                       throw new Error(data?.error || 'Error creating company');
                     }
 
+                    gaTrack('onboarding_step', { step: 'empresa_creada', rubro, referido: Boolean(referralCode) });
+                    try { localStorage.removeItem('ws_ref'); } catch {}
                     navigate('/dashboard');
                   } catch(e: any) {
                     alert(e.message || 'Error creating company');

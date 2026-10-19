@@ -14,7 +14,10 @@ const HEIGHTS = {
 export default function Logo({ size = "md", className = "" }: LogoProps) {
   return (
     <img
-      src="/logo-trim.png"
+      src="/logo-trim.webp"
+      width={368}
+      height={192}
+      fetchPriority="high"
       loading="eager"
       decoding="async"
       alt="WowSmart"

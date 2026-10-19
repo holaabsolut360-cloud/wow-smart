@@ -2,50 +2,31 @@ import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { useEffect, useState } from "react";
-import { supabase } from "./lib/supabase";
-
-const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
-  const [session, setSession] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setLoading(false);
-    });
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
-
-  if (loading) {
-    return <div className="min-h-screen flex items-center justify-center"><div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div></div>;
-  }
-
-  if (!session) {
-    return <Navigate to="/auth" replace />;
-  }
-
-  return <>{children}</>;
-};
 
 import Landing from "./pages/Landing";
-import Dashboard from "./pages/Dashboard";
-import Catalog from "./pages/Catalog";
-import SuperAdmin from "./pages/SuperAdmin";
-import Auth from "./pages/Auth";
-import Checkout from "./pages/Checkout";
-import PrivacyPolicy from "./pages/PrivacyPolicy";
-import LegalNotice from "./pages/LegalNotice";
-import CookiesPolicy from "./pages/CookiesPolicy";
-import ComplaintsBook from "./pages/ComplaintsBook";
-import Terms from "./pages/Terms";
-import NotFound from "./pages/NotFound";
+import { lazy, Suspense } from "react";
+import { useLocation } from "react-router-dom";
+import { initAnalytics, trackPageView } from "./lib/analytics";
+// Code splitting: solo la portada viaja en el paquete inicial; el resto se descarga al entrar.
+const ProtectedRoute = lazy(() => import("./components/ProtectedRoute"));
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const Catalog = lazy(() => import("./pages/Catalog"));
+const SuperAdmin = lazy(() => import("./pages/SuperAdmin"));
+const Auth = lazy(() => import("./pages/Auth"));
+const Checkout = lazy(() => import("./pages/Checkout"));
+const PrivacyPolicy = lazy(() => import("./pages/PrivacyPolicy"));
+const LegalNotice = lazy(() => import("./pages/LegalNotice"));
+const CookiesPolicy = lazy(() => import("./pages/CookiesPolicy"));
+const ComplaintsBook = lazy(() => import("./pages/ComplaintsBook"));
+const Terms = lazy(() => import("./pages/Terms"));
+const NotFound = lazy(() => import("./pages/NotFound"));
+initAnalytics();
+const PageViews = () => {
+  const loc = useLocation();
+  useEffect(() => { trackPageView(loc.pathname + loc.search); }, [loc.pathname, loc.search]);
+  return null;
+};
+const Loading = () => <div className="min-h-screen flex items-center justify-center" role="status" aria-label="Cargando"><div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div></div>;
 import WhatsAppButton from "./components/WhatsAppButton";
 
 const queryClient = new QueryClient();
@@ -54,6 +35,8 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
+      <PageViews />
+      <Suspense fallback={<Loading />}>
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/auth" element={<Auth />} />
@@ -69,6 +52,7 @@ export default function App() {
         <Route path="/superadmin" element={<ProtectedRoute><SuperAdmin /></ProtectedRoute>} />
         <Route path="*" element={<NotFound />} />
       </Routes>
+      </Suspense>
       <WhatsAppButton />
     </BrowserRouter>
     </QueryClientProvider>

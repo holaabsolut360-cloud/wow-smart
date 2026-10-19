@@ -1,8 +1,10 @@
+import { track as gaTrack } from '../../lib/analytics';
 import React, { useEffect, useRef, useState } from 'react';
 import { QRCodeCanvas } from 'qrcode.react';
 import { CheckCircle2, Circle, Copy, Download, Share2, MessageCircle, Eye, MousePointerClick, ShoppingBag, Trophy, Upload, AlertTriangle, Sparkles } from 'lucide-react';
 import { Company } from '../../types';
 import { apiClient } from '../../services/api';
+import { LoyaltyPanel } from './LoyaltyPanel';
 import { ImageUpload, resizeAndCompress } from '../ImageUpload';
 import { isValidWhatsapp, normalizeWhatsapp } from '../../config/templates';
 
@@ -18,6 +20,23 @@ const PLANS = [
   { name: 'Empresa', base: 79 },
 ];
 const withIgv = (n: number) => Math.round(n * 1.18 * 100) / 100;
+const ANNUAL_PCT = 20;
+const priceFor = (base: number, billing: string) => withIgv(billing === 'anual' ? Math.round(base * 12 * (1 - ANNUAL_PCT / 100) * 100) / 100 : base);
+
+// Envía cada paso del onboarding y la compra (plan pagado aprobado) una sola vez por navegador.
+const reportProgress = (d: any) => {
+  try {
+    const key = `ws_ev_${d?.company?.id}`;
+    const seen: string[] = JSON.parse(localStorage.getItem(key) || '[]');
+    const fire = (id: string, ev: string, p: any) => { if (!seen.includes(id)) { gaTrack(ev, p); seen.push(id); } };
+    if (d?.setup?.whatsapp) fire('whatsapp', 'onboarding_step', { step: 'whatsapp' });
+    if (d?.setup?.logo) fire('logo', 'onboarding_step', { step: 'logo' });
+    if (d?.setup?.products) fire('products', 'onboarding_step', { step: 'primer_producto' });
+    const lp = d?.lastPayment;
+    if (lp?.reviewed_at) fire(`purchase_${lp.reviewed_at}`, 'purchase', { currency: 'PEN', plan: lp.plan, value: Number(lp.amount || 0), transaction_id: `${d.company.id}_${lp.reviewed_at}` });
+    localStorage.setItem(key, JSON.stringify(seen));
+  } catch {}
+};
 
 export function GrowthPanel({ company, setCompany, goToTab }: Props) {
   const [g, setG] = useState<any>(null);
@@ -26,12 +45,13 @@ export function GrowthPanel({ company, setCompany, goToTab }: Props) {
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
   const [plan, setPlan] = useState('Emprendedor');
+  const [billing, setBilling] = useState<'mensual' | 'anual'>('mensual');
   const [proof, setProof] = useState('');
   const [renewMsg, setRenewMsg] = useState('');
   const [pay, setPay] = useState<any>(null);
   const qrRef = useRef<HTMLDivElement>(null);
 
-  const load = () => apiClient.get('/api/growth/me').then(setG).catch((e: any) => setErr(e.message));
+  const load = () => apiClient.get('/api/growth/me').then((d: any) => { reportProgress(d); setG(d); return d; }).catch((e: any) => setErr(e.message));
   useEffect(() => { load(); apiClient.get('/api/payment-settings').then(setPay).catch(() => {}); }, []);
 
   const saveCompany = async (patch: Partial<Company>) => {
@@ -64,7 +84,7 @@ export function GrowthPanel({ company, setCompany, goToTab }: Props) {
   const doneCount = steps.filter(s => s.done).length;
   const current = steps.findIndex(s => !s.done);
   const shareText = `¡Mira mi catálogo y haz tu pedido por WhatsApp! ${shareUrl}`;
-  const track = () => { try { navigator.sendBeacon?.('/api/track', new Blob([JSON.stringify({ slug: g.company.slug, type: 'share' })], { type: 'application/json' })); } catch {} };
+  const track = (channel = 'link') => { gaTrack('share_catalog', { channel }); try { navigator.sendBeacon?.('/api/track', new Blob([JSON.stringify({ slug: g.company.slug, type: 'share' })], { type: 'application/json' })); } catch {} };
 
   const downloadQr = () => {
     const canvas = qrRef.current?.querySelector('canvas');
@@ -73,7 +93,7 @@ export function GrowthPanel({ company, setCompany, goToTab }: Props) {
     a.href = canvas.toDataURL('image/png');
     a.download = `qr-catalogo-${g.company.slug}.png`;
     a.click();
-    track();
+    track('qr');
   };
 
   const onProofFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -85,8 +105,9 @@ export function GrowthPanel({ company, setCompany, goToTab }: Props) {
     if (!proof) return alert('Adjunta la captura de tu Yape.');
     setSaving(true);
     try {
-      const r = await apiClient.post('/api/renewal', { plan, proofDataUrl: proof });
-      setRenewMsg(`¡Recibido! Validaremos tu pago de S/ ${r.amount.toFixed(2)} y activaremos tu plan ${plan}. Te avisaremos por correo.`);
+      gaTrack('renewal_started', { plan, billing });
+      const r = await apiClient.post('/api/renewal', { plan, billing, proofDataUrl: proof });
+      setRenewMsg(`¡Recibido! Validaremos tu pago de S/ ${r.amount.toFixed(2)} y activaremos tu plan ${plan}${billing === 'anual' ? ' por 12 meses' : ''}. Te avisaremos por correo.`);
       setProof('');
     } catch (e: any) { alert(e.message || 'No se pudo enviar'); }
     finally { setSaving(false); }
@@ -191,8 +212,8 @@ export function GrowthPanel({ company, setCompany, goToTab }: Props) {
             </div>
             <div className="flex flex-col gap-2 w-full">
               <button onClick={downloadQr} className="px-4 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 font-semibold text-sm flex items-center gap-2"><Download className="w-4 h-4" /> Descargar QR para imprimir</button>
-              <a onClick={track} href={`https://wa.me/?text=${encodeURIComponent(shareText)}`} target="_blank" rel="noopener noreferrer" className="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-sm flex items-center gap-2"><MessageCircle className="w-4 h-4" /> Compartir por WhatsApp</a>
-              <a onClick={track} href={`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(shareUrl)}`} target="_blank" rel="noopener noreferrer" className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm flex items-center gap-2"><Share2 className="w-4 h-4" /> Compartir en Facebook</a>
+              <a onClick={() => track('whatsapp')} href={`https://wa.me/?text=${encodeURIComponent(shareText)}`} target="_blank" rel="noopener noreferrer" className="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-sm flex items-center gap-2"><MessageCircle className="w-4 h-4" /> Compartir por WhatsApp</a>
+              <a onClick={() => track('facebook')} href={`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(shareUrl)}`} target="_blank" rel="noopener noreferrer" className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm flex items-center gap-2"><Share2 className="w-4 h-4" /> Compartir en Facebook</a>
             </div>
           </div>
           <p className="text-xs text-slate-400 mt-3">Al compartir el enlace se muestra una vista previa con tu logo y nombre.</p>
@@ -208,17 +229,24 @@ export function GrowthPanel({ company, setCompany, goToTab }: Props) {
             <div className="p-3 rounded-xl bg-emerald-50 text-emerald-700 text-sm font-medium">{renewMsg}</div>
           ) : (
             <>
+              <div role="radiogroup" aria-label="Periodo de pago" className="flex gap-2 mb-3 text-sm">
+                {(['mensual', 'anual'] as const).map(b => (
+                  <button key={b} role="radio" aria-checked={billing === b} onClick={() => setBilling(b)} className={`flex-1 py-2 rounded-xl border font-bold ${billing === b ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-600'}`}>
+                    {b === 'mensual' ? 'Mensual' : <>Anual <span className="ml-1 text-[11px] px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700">-{ANNUAL_PCT}% fidelidad</span></>}
+                  </button>
+                ))}
+              </div>
               <div className="grid grid-cols-3 gap-2 mb-3">
                 {PLANS.map(p => (
                   <button key={p.name} onClick={() => setPlan(p.name)} className={`p-2 rounded-xl border text-left ${plan === p.name ? 'border-indigo-500 bg-indigo-50' : 'border-slate-200'}`}>
                     <div className="text-xs font-bold text-slate-700">{p.name}</div>
-                    <div className="text-sm font-extrabold text-indigo-700">S/ {withIgv(p.base).toFixed(2)}</div>
-                    <div className="text-[10px] text-slate-400">IGV incluido</div>
+                    <div className="text-sm font-extrabold text-indigo-700">S/ {priceFor(p.base, billing).toFixed(2)}</div>
+                    <div className="text-[10px] text-slate-500">{billing === 'anual' ? '12 meses · IGV incl.' : 'IGV incluido'}</div>
                   </button>
                 ))}
               </div>
               <div className="text-sm text-slate-600 mb-3">
-                1) Yapea <b>S/ {withIgv(PLANS.find(p => p.name === plan)!.base).toFixed(2)}</b>{pay?.configured ? <> a <b>{pay.accountNumber}</b> ({pay.companyName})</> : <> — te enviamos el número por <a className="text-indigo-600 font-bold" target="_blank" rel="noopener noreferrer" href={`https://wa.me/${pay?.whatsapp || '51901345791'}?text=${encodeURIComponent('Hola, quiero renovar mi plan ' + plan + ' de WowSmart (' + g.company.name + ')')}`}>WhatsApp</a></>}. 2) Sube la captura. 3) Nosotros lo aprobamos.
+                1) Yapea <b>S/ {priceFor(PLANS.find(p => p.name === plan)!.base, billing).toFixed(2)}</b>{pay?.configured ? <> a <b>{pay.accountNumber}</b> ({pay.companyName})</> : <> — te enviamos el número por <a className="text-indigo-600 font-bold" target="_blank" rel="noopener noreferrer" href={`https://wa.me/${pay?.whatsapp || '51901345791'}?text=${encodeURIComponent('Hola, quiero renovar mi plan ' + plan + ' de WowSmart (' + g.company.name + ')')}`}>WhatsApp</a></>}. 2) Sube la captura. 3) Nosotros lo aprobamos.
               </div>
               <label className="flex items-center justify-center gap-2 w-full p-3 border-2 border-dashed border-slate-300 rounded-xl cursor-pointer hover:bg-slate-50 text-sm font-semibold text-slate-600">
                 <Upload className="w-4 h-4" /> {proof ? 'Captura lista ✔ (cambiar)' : 'Subir captura del Yape'}
@@ -230,6 +258,7 @@ export function GrowthPanel({ company, setCompany, goToTab }: Props) {
           )}
         </section>
       </div>
+      <LoyaltyPanel />
     </div>
   );
 }
