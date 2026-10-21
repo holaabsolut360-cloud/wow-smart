@@ -4,7 +4,7 @@ import { useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ShoppingCart, Mail, Lock, User, ArrowRight, ArrowLeft, ShieldCheck, CheckCircle2 } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { supabase, pingAuth } from '../lib/supabase';
 import Logo from '../components/Logo';
 import { RUBRO_TEMPLATES, isValidWhatsapp } from '../config/templates';
 
@@ -52,11 +52,12 @@ export default function Auth() {
 
     try {
       if (view === 'login') {
-        const { error } = await supabase.auth.signInWithPassword({
+        const { data: li, error } = await supabase.auth.signInWithPassword({
           email,
           password
         });
         if (error) throw error;
+        pingAuth(li.session?.access_token);
         navigate('/dashboard');
       } else if (view === 'register') {
         const { data, error } = await supabase.auth.signUp({
@@ -68,6 +69,7 @@ export default function Auth() {
           }
         });
         if (error) throw error;
+        pingAuth(data.session?.access_token);
         gaTrack('sign_up', { method: 'email' });
         gaTrack('start_trial', { trial_days: 15 });
         setView(data.session ? 'onboarding' : 'reset-sent');

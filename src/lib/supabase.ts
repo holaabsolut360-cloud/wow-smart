@@ -11,3 +11,9 @@ export const supabase = createClient(
   supabaseUrl || 'https://placeholder.supabase.co',
   supabaseAnonKey || 'placeholder-key'
 );
+
+// Avisa al servidor (con JWT) para adjuntar IP/navegador al correo de aviso. Nunca bloquea.
+export function pingAuth(token?: string | null) {
+  if (!token) return;
+  fetch('/api/auth/ping', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, keepalive: true }).catch(() => {});
+}

@@ -5,6 +5,7 @@ import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { Resend } from 'resend';
+import { createAuthNotifier } from './server/authNotify';
 import crypto from "crypto";
 import { readSheet as readExcelSheet } from "read-excel-file/node";
 import rateLimit from "express-rate-limit";
@@ -1067,6 +1068,16 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
   });
   app.use('/api', authMiddleware);
   app.use('/api', subscriptionGuard);
+
+  const authNotifier = createAuthNotifier(supabaseAdmin);
+  authNotifier.start();
+  app.post("/api/auth/ping", async (req, res) => {
+    const user = (req as any).user;
+    if (!user?.id) return res.status(401).json({ error: 'Unauthorized' });
+    const fwd = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+    authNotifier.noteClient(user.id, fwd || req.socket.remoteAddress || undefined, String(req.headers['user-agent'] || ''));
+    res.json({ ok: true });
+  });
 
   app.get("/api/superadmin/session", async (req, res) => {
     res.json({ authenticated: await isSuperAdminRequest(req) });
