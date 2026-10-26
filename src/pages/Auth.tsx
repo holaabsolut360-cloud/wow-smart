@@ -6,7 +6,7 @@ import { ShoppingCart, Mail, Lock, User, ArrowRight, ArrowLeft, ShieldCheck, Che
 import { supabase } from '../lib/supabase';
 import Logo from '../components/Logo';
 
-type AuthView = 'login' | 'register' | 'forgot-password' | 'reset-sent' | 'onboarding';
+type AuthView = 'login' | 'register' | 'forgot-password' | 'reset-sent' | 'registration-sent' | 'onboarding';
 
 export default function Auth() {
   const [view, setView] = useState<AuthView>(
@@ -55,7 +55,7 @@ export default function Auth() {
           }
         });
         if (error) throw error;
-        setView(data.session ? 'onboarding' : 'reset-sent');
+        setView(data.session ? 'onboarding' : 'registration-sent');
       } else if (view === 'forgot-password') {
         const { error } = await supabase.auth.resetPasswordForEmail(email);
         if (error) throw error;
@@ -438,6 +438,28 @@ export default function Auth() {
                   Hemos enviado un enlace de recuperación a <strong>{email}</strong>. Por favor, revisa tu bandeja de entrada o carpeta de spam.
                 </p>
                 <button 
+                  onClick={() => setView('login')}
+                  className="w-full py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded-xl transition-all"
+                >
+                  Volver al inicio de sesión
+                </button>
+              </motion.div>
+            )}
+            {view === 'registration-sent' && (
+              <motion.div
+                key="registration-sent"
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="text-center py-8"
+              >
+                <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                  <CheckCircle2 className="w-10 h-10 text-emerald-600" />
+                </div>
+                <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight mb-4">Confirma tu correo</h2>
+                <p className="text-slate-500 mb-8 max-w-sm mx-auto">
+                  Hemos enviado un enlace de confirmación a <strong>{email}</strong>. Revisa tu bandeja de entrada o la carpeta de spam.
+                </p>
+                <button
                   onClick={() => setView('login')}
                   className="w-full py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded-xl transition-all"
                 >
