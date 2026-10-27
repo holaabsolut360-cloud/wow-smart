@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 
 import Landing from "./pages/Landing";
 import { lazy, Suspense } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { initAnalytics, trackPageView } from "./lib/analytics";
 // Code splitting: solo la portada viaja en el paquete inicial; el resto se descarga al entrar.
 const ProtectedRoute = lazy(() => import("./components/ProtectedRoute"));
@@ -27,6 +27,21 @@ const PageViews = () => {
   useEffect(() => { trackPageView(loc.pathname + loc.search); }, [loc.pathname, loc.search]);
   return null;
 };
+// Enlaces de correo caducados/usados: Supabase redirige con #error=...&error_code=...
+const AUTH_LINK_ERROR = typeof window !== 'undefined' && /(^|[#&])(error|error_code|error_description)=/.test(window.location.hash);
+const AuthLinkErrorHandler = () => {
+  const navigate = useNavigate();
+  useEffect(() => {
+    const h = window.location.hash;
+    if (AUTH_LINK_ERROR || /(^|[#&])(error|error_code|error_description)=/.test(h)) {
+      const p = new URLSearchParams(h.replace(/^#/, ''));
+      const code = p.get('error_code') || p.get('error') || '';
+      window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+      navigate('/auth?mode=link-expired' + (code ? `&code=${encodeURIComponent(code)}` : ''), { replace: true });
+    }
+  }, []);
+  return null;
+};
 const Loading = () => <div className="min-h-screen flex items-center justify-center" role="status" aria-label="Cargando"><div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div></div>;
 import WhatsAppButton from "./components/WhatsAppButton";
 
@@ -37,6 +52,7 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
       <PageViews />
+      <AuthLinkErrorHandler />
       <Suspense fallback={<Loading />}>
       <Routes>
         <Route path="/" element={<Landing />} />

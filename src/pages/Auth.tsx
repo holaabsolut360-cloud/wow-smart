@@ -8,11 +8,13 @@ import { supabase, pingAuth } from '../lib/supabase';
 import Logo from '../components/Logo';
 import { RUBRO_TEMPLATES, isValidWhatsapp } from '../config/templates';
 
-type AuthView = 'login' | 'register' | 'forgot-password' | 'reset-sent' | 'registration-sent' | 'onboarding' | 'reset-password';
+type AuthView = 'login' | 'register' | 'forgot-password' | 'reset-sent' | 'registration-sent' | 'onboarding' | 'reset-password' | 'link-expired';
 
 export default function Auth() {
   const [view, setView] = useState<AuthView>(
-    new URLSearchParams(window.location.search).get('mode') === 'reset' || /type=recovery/.test(window.location.hash)
+    new URLSearchParams(window.location.search).get('mode') === 'link-expired' || /(^|[#&])error(_code|_description)?=/.test(window.location.hash)
+      ? 'link-expired'
+      : new URLSearchParams(window.location.search).get('mode') === 'reset' || /type=recovery/.test(window.location.hash)
       ? 'reset-password'
       : new URLSearchParams(window.location.search).get('mode') === 'register'
       ? 'register'
@@ -40,6 +42,32 @@ export default function Auth() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [resetDone, setResetDone] = useState(false);
   const navigate = useNavigate();
+  const [expiredNotice, setExpiredNotice] = useState('');
+
+  const handleExpiredRecovery = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true); setExpiredNotice('');
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin + '/auth?mode=reset' });
+      if (error) throw error;
+      setView('reset-sent');
+    } catch (error: any) {
+      alert(error.message || 'No se pudo enviar el enlace. Intenta de nuevo.');
+    } finally { setIsLoading(false); }
+  };
+
+  const handleExpiredResend = async () => {
+    if (!email) { alert('Escribe tu correo electrónico primero.'); return; }
+    setIsLoading(true); setExpiredNotice('');
+    try {
+      const { error } = await supabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo: window.location.origin + '/auth?mode=onboarding' } });
+      if (error) throw error;
+      setExpiredNotice('Te enviamos un nuevo correo de confirmación. Revisa tu bandeja (y spam) y usa solo el último correo.');
+    } catch (error: any) {
+      const m = (error?.message || '').toLowerCase();
+      alert(m.includes('already') || m.includes('confirmed') ? 'Tu correo ya está confirmado: solo inicia sesión.' : (error?.message || 'No se pudo reenviar la confirmación.'));
+    } finally { setIsLoading(false); }
+  };
 
   // Recuperación de contraseña: el enlace del correo dispara PASSWORD_RECOVERY.
   useEffect(() => {
@@ -173,6 +201,68 @@ export default function Auth() {
 
         <div className="w-full max-w-md mt-16 md:mt-0">
           <AnimatePresence mode="wait">
+            {view === 'link-expired' && (
+              <motion.div
+                key="link-expired"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                transition={{ duration: 0.3 }}
+              >
+                <div className="mb-8">
+                  <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight mb-2">Enlace no válido</h2>
+                  <p className="text-slate-500">Tu enlace caducó o ya fue usado. Los enlaces de correo funcionan una sola vez y duran poco; si pediste varios, usa solo el último.</p>
+                </div>
+
+                <form onSubmit={handleExpiredRecovery} className="space-y-5">
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-2">Correo Electrónico</label>
+                    <div className="relative">
+                      <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                      <input
+                        type="email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        className="w-full pl-11 pr-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-slate-700 font-medium"
+                        placeholder="tu@correo.com"
+                        required
+                      />
+                    </div>
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={isLoading}
+                    className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md shadow-indigo-600/20 transition-all flex justify-center items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+                  >
+                    {isLoading ? (
+                      <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                    ) : (
+                      <>Enviar nuevo enlace para cambiar contraseña <ArrowRight className="w-5 h-5" /></>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isLoading}
+                    onClick={handleExpiredResend}
+                    className="w-full py-3.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold rounded-xl transition-all flex justify-center items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+                  >
+                    <Mail className="w-5 h-5" /> Reenviar correo de confirmación
+                  </button>
+                  {expiredNotice && <p className="text-sm font-medium text-emerald-700 bg-emerald-50 rounded-xl p-3">{expiredNotice}</p>}
+                </form>
+
+                <p className="mt-8 text-center text-slate-600 font-medium">
+                  ¿Ya confirmaste tu correo antes?{' '}
+                  <button
+                    onClick={() => { window.history.replaceState({}, document.title, window.location.pathname); setView('login'); }}
+                    className="text-indigo-600 font-bold hover:text-indigo-700 transition-colors"
+                  >
+                    Inicia sesión
+                  </button>
+                </p>
+              </motion.div>
+            )}
+
             {view === 'login' && (
               <motion.div
                 key="login"
