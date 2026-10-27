@@ -26,6 +26,7 @@ if (isProduction && missingServerEnv.length > 0) {
 }
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+const MAIL_FROM = process.env.RESEND_FROM || 'WowSmart <no-reply@wow-smart.com>';
 
 
 // Mock Database for the SaaS
@@ -1428,7 +1429,7 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     if (resend && payment.email) {
       try {
         await resend.emails.send({
-          from: 'WowSmart <onboarding@resend.dev>',
+          from: MAIL_FROM,
           to: [payment.email],
           subject: '¡Tu suscripción a WowSmart ha sido aprobada!',
           html: `
@@ -2278,7 +2279,7 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
       if (error) return 'panel'; // ya enviado antes, o tabla aún no creada
       if (!resend) return 'panel';
       await resend.emails.send({
-        from: 'WowSmart <onboarding@resend.dev>',
+        from: MAIL_FROM,
         to: [email],
         subject: `${notice.title} — WowSmart`,
         html: `<div style="font-family:sans-serif;max-width:560px;margin:auto"><h2 style="color:#6d28d9">${notice.title}</h2><p>Hola, te escribimos por <b>${String(company.name).replace(/</g, '&lt;')}</b>.</p><p>${notice.text}</p><p><a href="${publicBaseUrl}/dashboard" style="background:#6d28d9;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:bold">Ir a mi panel</a></p><p style="color:#64748b">Equipo WowSmart</p></div>`,
@@ -2495,7 +2496,7 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
             const email = u?.user?.email; if (!email) continue;
             const weekly = kind.startsWith('weekly_');
             await resend.emails.send({
-              from: 'WowSmart <onboarding@resend.dev>', to: [email],
+              from: MAIL_FROM, to: [email],
               subject: weekly ? `Tu resumen semanal — ${c.name}` : `${c.name}: tu catálogo te extraña 👋`,
               html: summaryHtml(c, s, s.inactive),
             });
@@ -4235,7 +4236,7 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
       
       if (resend) {
         const { data, error } = await resend.emails.send({
-          from: 'WowSmart <onboarding@resend.dev>',
+          from: MAIL_FROM,
           to: [email],
           subject: '¡Tu suscripción a WowSmart ha sido aprobada!',
           html: `
@@ -4246,7 +4247,7 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
               <p>Monto pagado: S/ ${amount}</p>
               <div style="background-color: #f8fafc; padding: 20px; border-radius: 8px; margin: 20px 0;">
                 <h3 style="margin-top: 0;">Ya puedes acceder a tu panel de control:</h3>
-                <a href="${req.headers.origin || 'http://localhost:3000'}/dashboard" style="display: inline-block; background-color: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;">
+                <a href="${publicBaseUrl}/dashboard" style="display: inline-block; background-color: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;">
                   Ir al Dashboard
                 </a>
               </div>
