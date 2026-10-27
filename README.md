@@ -67,7 +67,7 @@ La segunda migracion corrige politicas RLS recursivas comunes en `profiles`, agr
 - Las credenciales de SuperAdmin se validan en el servidor y no deben usar prefijo `VITE_`.
 - El servidor falla al iniciar en produccion si faltan variables criticas.
 - `SUPERADMIN_SESSION_SECRET` debe ser un valor largo, aleatorio y privado.
-- `RESEND_API_KEY` es opcional; si falta, el envio de correos queda simulado.
+- Correos salientes por SMTP (`MAIL_SMTP_*` o, si faltan, `SMTP_*`); si no hay SMTP, el envio queda simulado.
 
 ## Verificacion
 

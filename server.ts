@@ -4,7 +4,7 @@ import compression from "compression";
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import { Resend } from 'resend';
+import nodemailer from 'nodemailer';
 import { createAuthNotifier } from './server/authNotify';
 import crypto from "crypto";
 import { readSheet as readExcelSheet } from "read-excel-file/node";
@@ -25,8 +25,27 @@ if (isProduction && missingServerEnv.length > 0) {
   throw new Error(`Missing required production environment variables: ${missingServerEnv.join(", ")}`);
 }
 
-const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
-const MAIL_FROM = process.env.RESEND_FROM || 'WowSmart <no-reply@wow-smart.com>';
+// Correo saliente por SMTP (Banahosting). MAIL_SMTP_* es opcional; si falta usa SMTP_*.
+const mailHost = process.env.MAIL_SMTP_HOST || process.env.SMTP_HOST;
+const mailUser = process.env.MAIL_SMTP_USER || process.env.SMTP_USER;
+const mailPass = process.env.MAIL_SMTP_PASS || process.env.SMTP_PASS;
+const mailPort = Number(process.env.MAIL_SMTP_PORT || process.env.SMTP_PORT || 465);
+const mailTransport = (mailHost && mailUser && mailPass)
+  ? nodemailer.createTransport({ host: mailHost, port: mailPort, secure: mailPort !== 587, auth: { user: mailUser, pass: mailPass } })
+  : null;
+const resend = mailTransport ? {
+  emails: {
+    send: async (m: { from: string; to: string[]; subject: string; html: string }) => {
+      try {
+        const info = await mailTransport.sendMail({ from: m.from, to: m.to, subject: m.subject, html: m.html });
+        return { data: { id: info.messageId }, error: null as null | { message: string } };
+      } catch (e: any) {
+        return { data: null, error: { message: String(e?.message || e) } };
+      }
+    },
+  },
+} : null;
+const MAIL_FROM = process.env.MAIL_FROM || process.env.RESEND_FROM || `WowSmart <${mailUser || 'no-reply@wow-smart.com'}>`;
 
 
 // Mock Database for the SaaS
@@ -4265,7 +4284,7 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
         return res.json({ success: true, data });
       } else {
         // Simulate sending if no key
-        console.log('Simulating email send (No RESEND_API_KEY found)');
+        console.log('Simulating email send (faltan MAIL_SMTP_*/SMTP_*)');
         return res.json({ success: true, simulated: true });
       }
     } catch (err: any) {
