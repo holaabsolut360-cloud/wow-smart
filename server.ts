@@ -225,6 +225,10 @@ const normalizePaymentSettings = (value: any) => ({
 
 async function startServer() {
   const app = express();
+  // Producción corre detrás de LiteSpeed/proxy (cPanel). Confiamos en 1 salto para que
+  // req.ip sea la IP real del visitante y express-rate-limit no cuente a todos como uno
+  // (evita ERR_ERL_UNEXPECTED_X_FORWARDED_FOR).
+  app.set('trust proxy', 1);
   const PORT = Number(process.env.PORT || 3000);
 
   app.use(express.json({ limit: '50mb' }));
@@ -1212,9 +1216,15 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
   app.post("/api/superadmin/forgot-password", superAdminForgotLimiter, async (req, res) => {
     const generic = { ok: true, message: "Si el correo corresponde al superadministrador, recibirás un enlace para crear una nueva contraseña." };
     const email = String(req.body?.email || "").trim().toLowerCase();
-    if (!email || !superAdminEmail || !timingSafeStringEqual(email, superAdminEmail.trim().toLowerCase())) {
+    if (!superAdminEmail || !superAdminEmail.trim()) {
+      console.warn("superadmin forgot-password: SUPERADMIN_EMAIL está vacío en el servidor; no se envía nada");
       return res.json(generic);
     }
+    if (!email || !timingSafeStringEqual(email, superAdminEmail.trim().toLowerCase())) {
+      console.warn("superadmin forgot-password: correo no coincide con SUPERADMIN_EMAIL");
+      return res.json(generic);
+    }
+    console.log("superadmin forgot-password: solicitud válida, enviando");
     try {
       const token = crypto.randomBytes(32).toString("hex");
       const state = readSuperAdminAuthState();
@@ -1222,7 +1232,7 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
       writeSuperAdminAuthState(state);
       const link = `${PUBLIC_SITE_URL}/superadmin?reset=${token}`;
       if (!resend) {
-        console.warn("superadmin forgot-password: SMTP no configurado, no se envió el correo");
+        console.warn("superadmin forgot-password: transporte SMTP no configurado (MAIL_SMTP_*/SMTP_*), no se envió el correo");
       } else {
         const { error } = await resend.emails.send({
           from: MAIL_FROM,
@@ -1235,7 +1245,8 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
   <p style="font-size:13px;color:#64748b">El enlace vence en 30 minutos y solo se puede usar una vez. Si no lo pediste, ignora este correo: tu contraseña actual sigue funcionando.</p>
 </div>`,
         });
-        if (error) console.error("superadmin forgot-password: error al enviar", error.message);
+        if (error) console.error("superadmin forgot-password: resultado=error", error.message);
+        else console.log("superadmin forgot-password: resultado=ok (correo enviado por SMTP)");
       }
       await logSuperAdminAction("SOLICITAR_RECUPERACION", null, null, superAdminEmail, "Solicitud de recuperación de contraseña (cuenta maestra)");
     } catch (e: any) {

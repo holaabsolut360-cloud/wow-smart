@@ -692,7 +692,7 @@ export default function SuperAdmin() {
       const res = await fetch('/api/superadmin/forgot-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email: email.trim() }),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(data?.error || 'No se pudo enviar la solicitud.');
