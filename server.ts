@@ -7,6 +7,7 @@ import { createServer as createViteServer } from "vite";
 import nodemailer from 'nodemailer';
 import { createAuthNotifier } from './server/authNotify';
 import crypto from "crypto";
+import fs from "fs";
 import { readSheet as readExcelSheet } from "read-excel-file/node";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
@@ -517,6 +518,57 @@ const timingSafeStringEqual = (a: string, b: string) => {
   const bufB = Buffer.from(crypto.createHash("sha256").update(b).digest());
   return crypto.timingSafeEqual(bufA, bufB);
 };
+
+// ----------------------------------------------------------------------------
+// Recuperación de contraseña de la cuenta maestra (SUPERADMIN_EMAIL)
+// ----------------------------------------------------------------------------
+// La contraseña de la cuenta maestra viene del .env y no se puede cambiar
+// desde la web. Al recuperarla guardamos un hash scrypt "override" en un
+// archivo JSON FUERA de la carpeta de la app (por defecto ../wowsmart-data),
+// así el despliegue por zip no lo pisa. Si existe, el login lo usa en lugar
+// de SUPERADMIN_PASSWORD. Ruta configurable con SUPERADMIN_DATA_DIR.
+const superAdminDataDir = process.env.SUPERADMIN_DATA_DIR || path.resolve(process.cwd(), "..", "wowsmart-data");
+const superAdminAuthFile = path.join(superAdminDataDir, "superadmin-auth.json");
+type SuperAdminAuthState = {
+  passwordOverride?: { hash: string; salt: string; updatedAt: string };
+  reset?: { tokenHash: string; expiresAt: number };
+};
+const readSuperAdminAuthState = (): SuperAdminAuthState => {
+  try {
+    return JSON.parse(fs.readFileSync(superAdminAuthFile, "utf8")) || {};
+  } catch {
+    return {};
+  }
+};
+const writeSuperAdminAuthState = (state: SuperAdminAuthState) => {
+  fs.mkdirSync(superAdminDataDir, { recursive: true, mode: 0o700 });
+  const tmp = `${superAdminAuthFile}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(state), { mode: 0o600 });
+  fs.renameSync(tmp, superAdminAuthFile);
+};
+const revokeAllSuperAdminSessionsFor = async (email: string) => {
+  const client = getSuperAdminSessionClient();
+  if (client) {
+    try { await client.from("superadmin_sessions").delete().eq("email", email); } catch { /* sin bloqueo */ }
+  }
+  for (const [k, v] of inMemorySuperAdminSessions) if (v.email === email) inMemorySuperAdminSessions.delete(k);
+};
+const SUPERADMIN_RESET_TTL_MS = 30 * 60 * 1000;
+const PUBLIC_SITE_URL = (process.env.PUBLIC_SITE_URL || "https://wow-smart.com").replace(/\/+$/, "");
+const superAdminForgotLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Demasiadas solicitudes. Intenta de nuevo en unos minutos." },
+});
+const superAdminResetLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Demasiados intentos. Intenta de nuevo en unos minutos." },
+});
 
 const logSuperAdminAction = async (
   action: string,
@@ -1139,7 +1191,13 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
       superAdminEmail &&
       superAdminPassword &&
       timingSafeStringEqual(email, superAdminEmail) &&
-      timingSafeStringEqual(password, superAdminPassword)
+      (() => {
+        // Si se recuperó la contraseña desde la web, manda el hash guardado.
+        const override = readSuperAdminAuthState().passwordOverride;
+        return override
+          ? verifyPassword(password, override.hash, override.salt)
+          : timingSafeStringEqual(password, superAdminPassword);
+      })()
     ) {
       const sessionToken = await createSuperAdminSession(email);
       setSuperAdminCookie(res, sessionToken);
@@ -1148,6 +1206,68 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     }
 
     res.status(401).json({ error: "Invalid credentials" });
+  });
+
+  // Recuperación de contraseña de la cuenta maestra. Respuesta siempre genérica.
+  app.post("/api/superadmin/forgot-password", superAdminForgotLimiter, async (req, res) => {
+    const generic = { ok: true, message: "Si el correo corresponde al superadministrador, recibirás un enlace para crear una nueva contraseña." };
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    if (!email || !superAdminEmail || !timingSafeStringEqual(email, superAdminEmail.trim().toLowerCase())) {
+      return res.json(generic);
+    }
+    try {
+      const token = crypto.randomBytes(32).toString("hex");
+      const state = readSuperAdminAuthState();
+      state.reset = { tokenHash: hashSessionToken(token), expiresAt: Date.now() + SUPERADMIN_RESET_TTL_MS };
+      writeSuperAdminAuthState(state);
+      const link = `${PUBLIC_SITE_URL}/superadmin?reset=${token}`;
+      if (!resend) {
+        console.warn("superadmin forgot-password: SMTP no configurado, no se envió el correo");
+      } else {
+        const { error } = await resend.emails.send({
+          from: MAIL_FROM,
+          to: [superAdminEmail],
+          subject: "Recupera tu contraseña de SuperAdmin — WowSmart",
+          html: `<div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;color:#1e293b">
+  <h2 style="color:#4f46e5">Recuperar contraseña de SuperAdmin</h2>
+  <p>Recibimos una solicitud para crear una nueva contraseña del panel SuperAdmin de WowSmart.</p>
+  <p style="text-align:center;margin:28px 0"><a href="${link}" style="background:#4f46e5;color:#fff;padding:12px 22px;border-radius:10px;text-decoration:none;font-weight:bold">Crear nueva contraseña</a></p>
+  <p style="font-size:13px;color:#64748b">El enlace vence en 30 minutos y solo se puede usar una vez. Si no lo pediste, ignora este correo: tu contraseña actual sigue funcionando.</p>
+</div>`,
+        });
+        if (error) console.error("superadmin forgot-password: error al enviar", error.message);
+      }
+      await logSuperAdminAction("SOLICITAR_RECUPERACION", null, null, superAdminEmail, "Solicitud de recuperación de contraseña (cuenta maestra)");
+    } catch (e: any) {
+      console.error("superadmin forgot-password:", e?.message || e);
+    }
+    res.json(generic);
+  });
+
+  app.post("/api/superadmin/reset-password", superAdminResetLimiter, async (req, res) => {
+    const token = String(req.body?.token || "");
+    const password = String(req.body?.password || "");
+    if (password.length < 10) {
+      return res.status(400).json({ error: "La contraseña debe tener al menos 10 caracteres." });
+    }
+    const state = readSuperAdminAuthState();
+    const invalid = { error: "El enlace no es válido o ya venció. Solicita uno nuevo." };
+    if (!token || !state.reset || state.reset.expiresAt <= Date.now()) return res.status(400).json(invalid);
+    const a = Buffer.from(hashSessionToken(token), "hex");
+    const b = Buffer.from(state.reset.tokenHash, "hex");
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return res.status(400).json(invalid);
+    const { hash, salt } = hashPassword(password);
+    state.passwordOverride = { hash, salt, updatedAt: new Date().toISOString() };
+    delete state.reset; // un solo uso
+    try {
+      writeSuperAdminAuthState(state);
+    } catch (e: any) {
+      console.error("superadmin reset-password:", e?.message || e);
+      return res.status(500).json({ error: "No se pudo guardar la nueva contraseña." });
+    }
+    await revokeAllSuperAdminSessionsFor(superAdminEmail);
+    await logSuperAdminAction("RESTABLECER_CONTRASENA", null, null, superAdminEmail, "Contraseña de la cuenta maestra restablecida por correo");
+    res.json({ ok: true, message: "Contraseña actualizada. Ya puedes iniciar sesión." });
   });
 
   app.post("/api/superadmin/logout", async (req, res) => {
@@ -1532,6 +1652,70 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
     res.json({ id: data.id, estado: data.subscription_status, vencimiento: data.subscription_ends_at });
   });
 
+
+  // Extender la prueba gratuita de una empresa (7, 15 o 30 días) sin cambiar su estado
+  app.put("/api/superadmin/empresas/:id/extender-prueba", requireSuperAdmin, async (req, res) => {
+    const dias = Number(req.body?.dias);
+    if (![7, 15, 30].includes(dias)) {
+      return res.status(400).json({ error: "Los días deben ser 7, 15 o 30" });
+    }
+    const calcularFecha = (actual?: string | null) => {
+      const hoy = new Date();
+      hoy.setUTCHours(0, 0, 0, 0);
+      let base = hoy;
+      if (actual) {
+        const d = new Date(String(actual).split("T")[0] + "T00:00:00Z");
+        if (!isNaN(d.getTime()) && d.getTime() > hoy.getTime()) base = d;
+      }
+      base.setUTCDate(base.getUTCDate() + dias);
+      return base.toISOString().split("T")[0];
+    };
+    const ACTIVA_MSG = "La empresa ya tiene suscripción activa";
+
+    if (!useSupabaseDb) {
+      const idx = db.companies.findIndex((c: any) => c.id === req.params.id);
+      if (idx === -1) return res.status(404).json({ error: "Empresa no encontrada" });
+      const c = db.companies[idx];
+      if ((c.subscriptionStatus || "Activa") !== "Prueba Gratuita") return res.status(400).json({ error: ACTIVA_MSG });
+      const nuevaFecha = calcularFecha(c.subscriptionEndsAt);
+      c.subscriptionEndsAt = nuevaFecha;
+      return res.json({ id: c.id, estado: c.subscriptionStatus, vencimiento: nuevaFecha });
+    }
+
+    const client = supabaseAdmin || supabase;
+    if (!client) return res.status(503).json({ error: "Supabase is not configured" });
+
+    const { data: actual, error: readError } = await client
+      .from("companies")
+      .select("id, name, subscription_status, subscription_ends_at")
+      .eq("id", req.params.id)
+      .maybeSingle();
+    if (readError) return res.status(500).json({ error: readError.message });
+    if (!actual) return res.status(404).json({ error: "Empresa no encontrada" });
+    if (actual.subscription_status !== "Prueba Gratuita") return res.status(400).json({ error: ACTIVA_MSG });
+
+    const nuevaFecha = calcularFecha(actual.subscription_ends_at);
+    const { data, error } = await client
+      .from("companies")
+      .update({ subscription_ends_at: nuevaFecha })
+      .eq("id", req.params.id)
+      .eq("subscription_status", "Prueba Gratuita")
+      .select("id, name, subscription_status, subscription_ends_at")
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: "Empresa no encontrada" });
+
+    await logSuperAdminAction(
+      "EXTENDER_PRUEBA",
+      "company",
+      data.id,
+      data.name,
+      `Prueba extendida ${dias} días hasta ${nuevaFecha}.`,
+    );
+
+    res.json({ id: data.id, estado: data.subscription_status, vencimiento: data.subscription_ends_at });
+  });
 
   app.get("/api/superadmin/suscripciones", requireSuperAdmin, async (_req, res) => {
     if (!useSupabaseDb) {

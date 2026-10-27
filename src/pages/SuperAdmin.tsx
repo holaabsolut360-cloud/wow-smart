@@ -323,6 +323,36 @@ export default function SuperAdmin() {
     }
   };
 
+  const [extenderDias, setExtenderDias] = useState<Record<string, number>>({});
+  const [extenderLoadingId, setExtenderLoadingId] = useState<string | null>(null);
+  const [crmMensaje, setCrmMensaje] = useState('');
+
+  const extenderPrueba = async (lead: any) => {
+    const dias = extenderDias[lead.id] || 7;
+    if (!window.confirm(`¿Extender la prueba gratuita de "${lead.empresa}" por ${dias} días?`)) return;
+    setExtenderLoadingId(lead.id);
+    setCrmMensaje('');
+    setCrmError('');
+    try {
+      const res = await fetch(`/api/superadmin/empresas/${lead.id}/extender-prueba`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dias }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error || 'No se pudo extender la prueba');
+      const hoy = new Date();
+      const vence = data?.vencimiento ? new Date(`${data.vencimiento}T23:59:59`) : null;
+      const diasRestantes = vence ? Math.ceil((vence.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24)) : null;
+      setCrmLeads((prev: any[]) => prev.map((l: any) => (l.id === lead.id ? { ...l, vencimiento: data.vencimiento, diasRestantes } : l)));
+      setCrmMensaje(`Prueba de "${lead.empresa}" extendida ${dias} días, hasta ${data.vencimiento}.`);
+    } catch (err: any) {
+      setCrmError(err.message || 'Error al extender la prueba');
+    } finally {
+      setExtenderLoadingId(null);
+    }
+  };
+
   const fetchReclamos = async () => {
     setReclamosLoading(true);
     setReclamosError('');
@@ -644,6 +674,63 @@ export default function SuperAdmin() {
     }
   };
 
+  const [resetToken] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get('reset') || ''; } catch { return ''; }
+  });
+  const [authView, setAuthView] = useState<'login' | 'forgot' | 'reset'>(resetToken ? 'reset' : 'login');
+  const [authInfo, setAuthInfo] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [newPassword2, setNewPassword2] = useState('');
+  const [isSubmittingAuth, setIsSubmittingAuth] = useState(false);
+
+  const handleForgot = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setAuthInfo('');
+    setIsSubmittingAuth(true);
+    try {
+      const res = await fetch('/api/superadmin/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error || 'No se pudo enviar la solicitud.');
+      setAuthInfo(data?.message || 'Si el correo corresponde al superadministrador, recibirás un enlace.');
+    } catch (err: any) {
+      setError(err.message || 'No se pudo enviar la solicitud.');
+    } finally {
+      setIsSubmittingAuth(false);
+    }
+  };
+
+  const handleReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setAuthInfo('');
+    if (newPassword.length < 10) return setError('La contraseña debe tener al menos 10 caracteres.');
+    if (newPassword !== newPassword2) return setError('Las contraseñas no coinciden.');
+    setIsSubmittingAuth(true);
+    try {
+      const res = await fetch('/api/superadmin/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: resetToken, password: newPassword }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error || 'No se pudo cambiar la contraseña.');
+      setNewPassword('');
+      setNewPassword2('');
+      window.history.replaceState(null, '', '/superadmin');
+      setAuthView('login');
+      setAuthInfo('Contraseña actualizada. Ya puedes iniciar sesión con tu nueva contraseña.');
+    } catch (err: any) {
+      setError(err.message || 'No se pudo cambiar la contraseña.');
+    } finally {
+      setIsSubmittingAuth(false);
+    }
+  };
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -727,6 +814,47 @@ export default function SuperAdmin() {
             </motion.div>
           )}
 
+          {authInfo && (
+            <div className="bg-indigo-50 text-indigo-700 p-4 rounded-xl mb-6 text-sm font-medium text-center border border-indigo-200">{authInfo}</div>
+          )}
+
+          {authView === 'forgot' ? (
+            <form onSubmit={handleForgot} className="space-y-5">
+              <p className="text-sm text-slate-500 text-center">Escribe el correo del superadministrador y te enviaremos un enlace para crear una nueva contraseña.</p>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Correo Electrónico</label>
+                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-slate-700 font-medium" required />
+              </div>
+              <button type="submit" disabled={isSubmittingAuth} className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-bold rounded-xl shadow-md transition-colors mt-2 disabled:opacity-70 disabled:cursor-not-allowed">
+                {isSubmittingAuth ? 'Enviando...' : 'Enviar enlace'}
+              </button>
+              <div className="text-center">
+                <button type="button" onClick={() => { setError(''); setAuthInfo(''); setAuthView('login'); }} className="text-sm font-medium text-indigo-600 hover:text-purple-700">
+                  Volver a iniciar sesión
+                </button>
+              </div>
+            </form>
+          ) : authView === 'reset' ? (
+            <form onSubmit={handleReset} className="space-y-5">
+              <p className="text-sm text-slate-500 text-center">Crea tu nueva contraseña de SuperAdmin (mínimo 10 caracteres).</p>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Nueva contraseña</label>
+                <input type="password" minLength={10} value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-slate-700 font-medium" required autoComplete="new-password" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Repite la contraseña</label>
+                <input type="password" minLength={10} value={newPassword2} onChange={(e) => setNewPassword2(e.target.value)} className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-slate-700 font-medium" required autoComplete="new-password" />
+              </div>
+              <button type="submit" disabled={isSubmittingAuth} className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-bold rounded-xl shadow-md transition-colors mt-2 disabled:opacity-70 disabled:cursor-not-allowed">
+                {isSubmittingAuth ? 'Guardando...' : 'Guardar nueva contraseña'}
+              </button>
+              <div className="text-center">
+                <button type="button" onClick={() => { setError(''); setAuthInfo(''); setAuthView('login'); }} className="text-sm font-medium text-indigo-600 hover:text-purple-700">
+                  Volver a iniciar sesión
+                </button>
+              </div>
+            </form>
+          ) : (
           <form onSubmit={handleLogin} className="space-y-5">
             <div>
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Correo Electrónico</label>
@@ -757,7 +885,13 @@ export default function SuperAdmin() {
             >
               {isSubmittingLogin ? 'Ingresando...' : 'Ingresar al Panel'}
             </button>
+            <div className="text-center">
+              <button type="button" onClick={() => { setError(''); setAuthInfo(''); setAuthView('forgot'); }} className="text-sm font-medium text-indigo-600 hover:text-purple-700">
+                ¿Olvidaste tu contraseña?
+              </button>
+            </div>
           </form>
+          )}
           
           <div className="mt-8 text-center border-t border-slate-100 pt-6">
              <Link to="/" className="text-slate-400 font-medium hover:text-slate-600 text-sm transition-colors flex items-center justify-center gap-1">
@@ -1572,6 +1706,7 @@ export default function SuperAdmin() {
                 <p className="text-slate-500 text-sm">Empresas en periodo de prueba, ordenadas por proximidad de vencimiento.</p>
               </div>
               {crmError && <div className="mx-6 mt-4 p-3 rounded-lg bg-rose-50 text-rose-700 text-sm">{crmError}</div>}
+              {crmMensaje && <div className="mx-6 mt-4 p-3 rounded-lg bg-emerald-50 text-emerald-700 text-sm">{crmMensaje}</div>}
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
@@ -1581,12 +1716,13 @@ export default function SuperAdmin() {
                       <th className="p-4 font-bold border-b border-slate-200">Registro</th>
                       <th className="p-4 font-bold border-b border-slate-200">Vence prueba</th>
                       <th className="p-4 font-bold border-b border-slate-200">Días restantes</th>
+                      <th className="p-4 font-bold border-b border-slate-200">Acciones</th>
                     </tr>
                   </thead>
                   <tbody className="text-sm">
-                    {crmLoading && <tr><td colSpan={5} className="p-6 text-center text-slate-400">Cargando leads...</td></tr>}
+                    {crmLoading && <tr><td colSpan={6} className="p-6 text-center text-slate-400">Cargando leads...</td></tr>}
                     {!crmLoading && crmLeads.length === 0 && !crmError && (
-                      <tr><td colSpan={5} className="p-6 text-center text-slate-400">No hay empresas en prueba gratuita actualmente.</td></tr>
+                      <tr><td colSpan={6} className="p-6 text-center text-slate-400">No hay empresas en prueba gratuita actualmente.</td></tr>
                     )}
                     {crmLeads.map((lead: any) => (
                       <tr key={lead.id} className="border-b border-slate-100 hover:bg-slate-50">
@@ -1598,6 +1734,26 @@ export default function SuperAdmin() {
                           <span className={`px-2 py-1 rounded font-medium text-xs ${lead.diasRestantes !== null && lead.diasRestantes <= 3 ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}`}>
                             {lead.diasRestantes !== null ? `${lead.diasRestantes} días` : '-'}
                           </span>
+                        </td>
+                        <td className="p-4">
+                          <div className="flex items-center gap-2">
+                            <select
+                              value={extenderDias[lead.id] || 7}
+                              onChange={(e) => setExtenderDias((prev) => ({ ...prev, [lead.id]: Number(e.target.value) }))}
+                              className="border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-700"
+                            >
+                              <option value={7}>7 días</option>
+                              <option value={15}>15 días</option>
+                              <option value={30}>30 días</option>
+                            </select>
+                            <button
+                              onClick={() => extenderPrueba(lead)}
+                              disabled={extenderLoadingId === lead.id}
+                              className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium disabled:opacity-50"
+                            >
+                              {extenderLoadingId === lead.id ? 'Extendiendo...' : 'Extender prueba'}
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
