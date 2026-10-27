@@ -4,6 +4,9 @@
 // aporta IP/navegador mediante /api/auth/ping (con JWT verificado).
 import nodemailer from 'nodemailer';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const LOGIN_THROTTLE_MS = 30 * 60 * 1000;
 const POLL_MS = Number(process.env.AUTH_NOTIFY_POLL_MS || 60_000);
@@ -18,9 +21,43 @@ export function shouldSendLogin(last: number | undefined, now: number) {
   return last === undefined || now - last >= LOGIN_THROTTLE_MS;
 }
 
+// Dedupe persistente y compartido entre procesos (Passenger puede levantar varios workers
+// y reiniciarlos; cada uno tenía su propio Map y su propio cursor -> avisos duplicados).
+// Se reclama cada aviso creando un archivo con 'wx' (creación exclusiva = atómica entre procesos).
+export function createDedupeStore(dir?: string) {
+  const candidates = [dir, process.env.AUTH_NOTIFY_STATE_DIR, path.join(process.cwd(), 'tmp', 'auth-notify'), path.join(os.tmpdir(), 'wowsmart-auth-notify')].filter(Boolean) as string[];
+  let base = '';
+  for (const c of candidates) {
+    try { fs.mkdirSync(c, { recursive: true }); fs.accessSync(c, fs.constants.W_OK); base = c; break; } catch { /* siguiente */ }
+  }
+  const mem = new Set<string>();
+  const safe = (k: string) => k.replace(/[^a-zA-Z0-9_.-]/g, '_');
+  function claim(key: string): boolean {
+    if (mem.has(key)) return false;
+    mem.add(key);
+    if (!base) return true;
+    try { fs.writeFileSync(path.join(base, safe(key)), String(Date.now()), { flag: 'wx' }); return true; }
+    catch (e: any) { return e?.code !== 'EEXIST'; }
+  }
+  function mtime(key: string): number | undefined {
+    try { return fs.statSync(path.join(base, safe(key))).mtimeMs; } catch { return undefined; }
+  }
+  // Registro: una sola vez por correo de usuario, para siempre.
+  function claimRegistration(email: string) { return claim('reg-' + email.trim().toLowerCase()); }
+  // Ingreso: máximo 1 cada 30 min por persona (ventanas fijas + revisión de la ventana anterior).
+  function claimLogin(userId: string, now: number) {
+    const b = Math.floor(now / LOGIN_THROTTLE_MS);
+    const prev = mtime(`login-${userId}-${b - 1}`) ?? mtime(`reg-at-${userId}`);
+    if (prev !== undefined && !shouldSendLogin(prev, now)) return false;
+    return claim(`login-${userId}-${b}`);
+  }
+  function markRegisteredAt(userId: string) { claim(`reg-at-${userId}`); }
+  return { claimRegistration, claimLogin, markRegisteredAt, dir: base };
+}
+
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 
-export function createAuthNotifier(admin: SupabaseClient | null) {
+export function createAuthNotifier(admin: SupabaseClient | null, store = createDedupeStore()) {
   const to = process.env.AUTH_NOTIFY_TO || 'hola.absolut360@gmail.com';
   const host = process.env.SMTP_HOST;
   const enabled = Boolean(admin && host && process.env.SMTP_USER && process.env.SMTP_PASS && process.env.AUTH_NOTIFY_DISABLED !== 'true');
@@ -37,6 +74,7 @@ export function createAuthNotifier(admin: SupabaseClient | null) {
   let cursor = Date.now(); // solo eventos posteriores al arranque
   let baselineDone = false;
   let running = false;
+  let pending = false;
 
   async function businessOf(userId: string) {
     try {
@@ -84,6 +122,8 @@ export function createAuthNotifier(admin: SupabaseClient | null) {
         lastSignIn.set(u.id, signIn);
         if (!baselineDone) continue;
         if (created > cursor) {
+          if (!store.claimRegistration(u.email || u.id)) continue;
+          store.markRegisteredAt(u.id); // no duplicar con el ingreso inicial
           await send('registro', u, new Date(created)).catch(e => console.error('authNotify registro', e?.message));
           if (signIn) lastLoginMail.set(u.id, now); // no duplicar con el ingreso inicial
           continue;
@@ -91,6 +131,7 @@ export function createAuthNotifier(admin: SupabaseClient | null) {
         if (signIn && signIn !== prev && Date.parse(signIn) > cursor - POLL_MS) {
           if (!shouldSendLogin(lastLoginMail.get(u.id), now)) continue;
           lastLoginMail.set(u.id, now);
+          if (!store.claimLogin(u.id, now)) continue;
           await send('ingreso', u, new Date(signIn)).catch(e => console.error('authNotify ingreso', e?.message));
         }
       }
@@ -110,7 +151,7 @@ export function createAuthNotifier(admin: SupabaseClient | null) {
   // Llamado por /api/auth/ping (usuario ya verificado por JWT): guarda IP/navegador y revisa pronto.
   function noteClient(userId: string, ip?: string, ua?: string) {
     ctx.set(userId, { ip, ua: ua?.slice(0, 200), at: Date.now() });
-    setTimeout(scan, 3000);
+    if (!pending) { pending = true; setTimeout(() => { pending = false; scan(); }, 3000); }
   }
 
   return { start, noteClient, scan, enabled };
