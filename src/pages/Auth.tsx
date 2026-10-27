@@ -8,11 +8,13 @@ import { supabase, pingAuth } from '../lib/supabase';
 import Logo from '../components/Logo';
 import { RUBRO_TEMPLATES, isValidWhatsapp } from '../config/templates';
 
-type AuthView = 'login' | 'register' | 'forgot-password' | 'reset-sent' | 'registration-sent' | 'onboarding';
+type AuthView = 'login' | 'register' | 'forgot-password' | 'reset-sent' | 'registration-sent' | 'onboarding' | 'reset-password';
 
 export default function Auth() {
   const [view, setView] = useState<AuthView>(
-    new URLSearchParams(window.location.search).get('mode') === 'register'
+    new URLSearchParams(window.location.search).get('mode') === 'reset' || /type=recovery/.test(window.location.hash)
+      ? 'reset-password'
+      : new URLSearchParams(window.location.search).get('mode') === 'register'
       ? 'register'
       : new URLSearchParams(window.location.search).get('mode') === 'onboarding'
         ? 'onboarding'
@@ -34,7 +36,43 @@ export default function Auth() {
   const [rubro, setRubro] = useState<string>('tienda');
   const [useTemplate, setUseTemplate] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [resetDone, setResetDone] = useState(false);
   const navigate = useNavigate();
+
+  // Recuperación de contraseña: el enlace del correo dispara PASSWORD_RECOVERY.
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') setView('reset-password');
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newPassword.length < 8) { alert('La contraseña debe tener al menos 8 caracteres.'); return; }
+    if (newPassword !== confirmPassword) { alert('Las contraseñas no coinciden.'); return; }
+    setIsLoading(true);
+    try {
+      const { data: s } = await supabase.auth.getSession();
+      if (!s.session) throw new Error('El enlace de recuperación no es válido o ya caducó. Solicita uno nuevo desde «¿Olvidaste tu contraseña?».');
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) {
+        const m = (error.message || '').toLowerCase();
+        if (m.includes('different from the old')) throw new Error('La nueva contraseña debe ser distinta a la anterior.');
+        if (m.includes('weak') || m.includes('at least')) throw new Error('La contraseña es muy débil. Usa al menos 8 caracteres.');
+        throw new Error('No se pudo actualizar la contraseña. Intenta de nuevo o solicita un nuevo enlace.');
+      }
+      setResetDone(true);
+      window.history.replaceState({}, document.title, window.location.pathname);
+      setTimeout(() => navigate('/dashboard'), 2500);
+    } catch (error: any) {
+      alert(error.message || 'Error al actualizar la contraseña');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -74,7 +112,9 @@ export default function Auth() {
         gaTrack('start_trial', { trial_days: 15 });
         setView(data.session ? 'onboarding' : 'registration-sent');
       } else if (view === 'forgot-password') {
-        const { error } = await supabase.auth.resetPasswordForEmail(email);
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: window.location.origin + '/auth?mode=reset'
+        });
         if (error) throw error;
         setView('reset-sent');
       }
@@ -302,6 +342,39 @@ export default function Auth() {
                     Inicia sesión
                   </button>
                 </p>
+              </motion.div>
+            )}
+
+            {view === 'reset-password' && (
+              <motion.div key="reset-password" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.3 }}>
+                <div className="mb-8">
+                  <div className="w-12 h-12 bg-indigo-100 rounded-xl flex items-center justify-center mb-6">
+                    {resetDone ? <CheckCircle2 className="w-6 h-6 text-indigo-600" /> : <ShieldCheck className="w-6 h-6 text-indigo-600" />}
+                  </div>
+                  <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight mb-2">{resetDone ? '¡Contraseña actualizada!' : 'Crea tu nueva contraseña'}</h2>
+                  <p className="text-slate-500">{resetDone ? 'Tu contraseña se cambió correctamente. Te llevamos a tu panel…' : 'Escribe tu nueva contraseña dos veces para confirmarla.'}</p>
+                </div>
+                {!resetDone && (
+                <form onSubmit={handleResetPassword} className="space-y-6">
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-2">Nueva contraseña</label>
+                    <div className="relative">
+                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                      <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="w-full pl-11 pr-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-slate-700 font-medium" placeholder="Mínimo 8 caracteres" minLength={8} autoComplete="new-password" required />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-2">Confirmar contraseña</label>
+                    <div className="relative">
+                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                      <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} className="w-full pl-11 pr-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-slate-700 font-medium" placeholder="Mínimo 8 caracteres" minLength={8} autoComplete="new-password" required />
+                    </div>
+                  </div>
+                  <button type="submit" disabled={isLoading} className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md shadow-indigo-600/20 transition-all flex justify-center items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed">
+                    {isLoading ? (<div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>) : 'Guardar nueva contraseña'}
+                  </button>
+                </form>
+                )}
               </motion.div>
             )}
 
