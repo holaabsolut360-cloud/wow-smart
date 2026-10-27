@@ -37,7 +37,8 @@ export function createDedupeStore(dir?: string) {
     mem.add(key);
     if (!base) return true;
     try { fs.writeFileSync(path.join(base, safe(key)), String(Date.now()), { flag: 'wx' }); return true; }
-    catch (e: any) { return e?.code !== 'EEXIST'; }
+    // Fail-closed: cualquier error (EEXIST, EACCES, ENOENT...) = no enviar; mejor perder un aviso que duplicarlo.
+    catch (e: any) { if (e?.code !== 'EEXIST') console.error('authNotify claim', key, e?.code); return false; }
   }
   function mtime(key: string): number | undefined {
     try { return fs.statSync(path.join(base, safe(key))).mtimeMs; } catch { return undefined; }
@@ -66,6 +67,8 @@ export function createAuthNotifier(admin: SupabaseClient | null, store = createD
     secure: (process.env.SMTP_SECURE || (process.env.SMTP_PORT === '587' ? 'false' : 'true')) === 'true',
     auth: { user: process.env.SMTP_USER!, pass: process.env.SMTP_PASS! },
   }) : null;
+  const instance = `${os.hostname()}:${process.pid}:${process.cwd()}`;
+  console.log('authNotify: instancia', instance, 'estado en', store.dir || '(solo memoria)');
   const from = process.env.SMTP_FROM || `WowSmart Avisos <${process.env.SMTP_USER}>`;
 
   const ctx = new Map<string, Ctx>();
@@ -98,9 +101,10 @@ export function createAuthNotifier(admin: SupabaseClient | null, store = createD
     if (c?.ip) rows.push(['IP', c.ip]);
     if (c?.ua) rows.push(['Navegador', c.ua]);
     const subject = kind === 'registro' ? `🆕 Nuevo registro en WowSmart: ${u.email}` : `🔑 Ingreso a WowSmart: ${u.email}`;
+    rows.push(['Instancia', instance]);
     const text = rows.map(([k, v]) => `${k}: ${v}`).join('\n') + '\n\nAviso automático de wow-smart.com';
     const html = `<h2 style="font-family:sans-serif">${esc(subject)}</h2><table style="font-family:sans-serif;border-collapse:collapse">${rows.map(([k, v]) => `<tr><td style="padding:4px 12px 4px 0;color:#555"><b>${esc(k)}</b></td><td>${esc(String(v))}</td></tr>`).join('')}</table><p style="color:#888;font-size:12px">Aviso automático de wow-smart.com</p>`;
-    await transport!.sendMail({ from, to, subject, text, html });
+    await transport!.sendMail({ from, to, subject, text, html, headers: { 'X-WowSmart-Instance': instance } });
   }
 
   async function scan() {
@@ -122,8 +126,12 @@ export function createAuthNotifier(admin: SupabaseClient | null, store = createD
         lastSignIn.set(u.id, signIn);
         if (!baselineDone) continue;
         if (created > cursor) {
+          if (u.app_metadata?.wow_reg_notified) continue; // ya avisado por otra instancia/host
           if (!store.claimRegistration(u.email || u.id)) continue;
-          store.markRegisteredAt(u.id); // no duplicar con el ingreso inicial
+          store.markRegisteredAt(u.id);
+          // Marca compartida en Supabase ANTES de enviar: visible para cualquier otra instancia/host.
+          try { await admin!.auth.admin.updateUserById(u.id, { app_metadata: { ...(u.app_metadata || {}), wow_reg_notified: new Date().toISOString() } }); }
+          catch (e: any) { console.error('authNotify marca', e?.message); } // no duplicar con el ingreso inicial
           await send('registro', u, new Date(created)).catch(e => console.error('authNotify registro', e?.message));
           if (signIn) lastLoginMail.set(u.id, now); // no duplicar con el ingreso inicial
           continue;
