@@ -3088,11 +3088,18 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
         .insert(stripUndefined(fromCompany(company)))
         .select("*")
         .single();
-      // Si la base rechaza el rubro (CHECK), reintenta con el valor por defecto.
-      if (error && /business_type|check/i.test(error.message || '')) {
+      // Si la base rechaza el rubro (CHECK de business_type), reintenta con el valor por defecto.
+      // Solo para business_type: otros CHECK (p. ej. subscription_status) no se arreglan cambiando el rubro.
+      if (error && /business_type/i.test(error.message || '')) {
         ({ data, error } = await client.from("companies").insert(stripUndefined(fromCompany({ ...company, businessType: "Restaurante" }))).select("*").single());
       }
-      if (error) return res.status(500).json({ error: error.message });
+      if (error) {
+        console.error('[onboarding] No se pudo crear la empresa:', error.message);
+        if (/subscription_status/i.test(error.message || '')) {
+          return res.status(500).json({ error: "No pudimos activar tu prueba gratis en este momento. Escríbenos por WhatsApp y lo resolvemos de inmediato.", code: "TRIAL_STATUS_REJECTED" });
+        }
+        return res.status(500).json({ error: error.message });
+      }
 
       if (templateProducts.length) {
         const rows = templateProducts.map((p: any) => stripUndefined(fromProduct(normalizeProductPayload({ ...p, companyId: data.id, itemType: 'Producto', stock: null }))));
@@ -3736,9 +3743,19 @@ const subscriptionGuard = async (req: express.Request, res: express.Response, ne
       const client = getRequestSupabase(req);
       if (!client) return res.status(503).json({ error: "Supabase is not configured" });
 
+      // El dueño no puede cambiar su plan ni su suscripción desde el panel:
+      // esos campos solo los modifica el SuperAdmin (aprobación de pagos,
+      // extender prueba, activar/suspender). Además, reenviar el estado guardado
+      // hacía fallar el guardado si la base no aceptaba ese valor.
+      const ownerPatch: any = stripUndefined(fromCompany(req.body || {}));
+      delete ownerPatch.plan;
+      delete ownerPatch.subscription_status;
+      delete ownerPatch.subscription_ends_at;
+      delete ownerPatch.user_id;
+      delete ownerPatch.owner_id;
       const { data, error } = await client
         .from("companies")
-        .update(stripUndefined(fromCompany(req.body)))
+        .update(ownerPatch)
         .eq("id", (req.params as any).id)
         .select("*")
         .single();
